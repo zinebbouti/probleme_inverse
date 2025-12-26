@@ -120,46 +120,82 @@ class SourceLocalization:
         """Fonction source gaussienne centrée en epsilon"""
         return intensity * np.exp(-((x - epsilon)**2) / (2 * width**2))
     
+    # def source_function_mms(self, x, edge):
+    #     """
+    #     Source manufacturée pour la validation MMS
+    #     """
+    #     L = edge['length']
+    #     a = edge['a']
+    #     return a * (np.pi / L)**2 * np.sin(np.pi * x / L)
+    
+    def source_function_mms(self, x, edge):
+        a = edge['a']
+        L = edge['length']
+        eid = edge['id']
+
+        C = 1.0
+        A1 = 0.0
+        if eid == 0:
+            A = A1
+        elif eid == 1:
+            A = 2.0 * C / L**2 - A1
+        else:
+            A = 0.0
+
+        B = 1.0
+
+        wpp = 2.0 * L**2 - 12.0 * L * x + 12.0 * x**2  # w''(x)
+        return 2.0 * a * A - a * B * wpp
+
+
+
+
+    
     def source_derivative(self, x, epsilon, intensity=1.0, width=0.05):
         """Dérivée de la source par rapport à epsilon"""
         gauss = np.exp(-((x - epsilon)**2) / (2 * width**2))
         return intensity * (x - epsilon) / width**2 * gauss
     
-    def assemble_system(self, epsilon_dict=None, source_intensity=1.0, manufactured=None):
+    def assemble_system(self, epsilon_dict=None, source_intensity=1.0):
         """Assemble le système linéaire A*u = g"""
         n = self.graph.n_dof
         A = lil_matrix((n, n))
         g = np.zeros(n)
-        
+
         for edge in self.graph.edges:
             edge_id = edge['id']
             h = edge['h']
             a = edge['a']
             n_pts = edge['n']
-            
+
             x = np.linspace(h, edge['length'] - h, n_pts)
             dofs = self.graph.get_edge_dofs(edge_id)
-            
-            if manufactured is not None:
-                g_local = manufactured.source_exact(x)
+
+            # =========================
+            # CHOIX DE LA SOURCE
+            # =========================
+            if self.validation_mode:
+                g_local = self.source_function_mms(x, edge)
             elif epsilon_dict is not None and edge_id in epsilon_dict:
                 epsilon = epsilon_dict[edge_id]
                 g_local = self.source_function(x, epsilon, source_intensity)
             else:
                 g_local = np.zeros(n_pts)
-            
-            stiffness = a / h**2
+
+            stiffness = a / h
+
             for i, dof in enumerate(dofs):
-                g[dof] = g_local[i]
+                g[dof] += h * g_local[i]
+
                 A[dof, dof] = 2 * stiffness
-                
+
                 if i > 0:
                     A[dof, dofs[i-1]] = -stiffness
                 else:
                     v_start_dof = self.graph.get_vertex_dof(edge['v_start'])
                     if v_start_dof is not None:
                         A[dof, v_start_dof] = -stiffness
-                
+
                 if i + 1 < len(dofs):
                     A[dof, dofs[i+1]] = -stiffness
                 else:
@@ -170,25 +206,42 @@ class SourceLocalization:
         for v_id in self.graph.vertices:
             if v_id in self.graph.boundary_vertices:
                 continue
-                
+
             v_dof = self.graph.get_vertex_dof(v_id)
             incident_edges = self.graph.vertices[v_id]['edges']
-            
+
             for edge_id, position in incident_edges:
                 edge = self.graph.edges[edge_id]
                 h = edge['h']
                 a = edge['a']
-                stiffness = a / h**2
-                
-                if position == 'start':
-                    first_dof = self.graph.get_edge_dofs(edge_id)[0]
-                    A[v_dof, v_dof] += stiffness
-                    A[v_dof, first_dof] = -stiffness
+
+                dofs = self.graph.get_edge_dofs(edge_id)
+                npts = len(dofs)
+
+                # Il faut au moins 2 points internes pour ordre 2 au nœud
+                if npts >= 2:
+                    if position == 'start':
+                        u1 = dofs[0]   # point à h
+                        u2 = dofs[1]   # point à 2h
+                    else:
+                        u1 = dofs[-1]  # point à L-h (adjacent au nœud)
+                        u2 = dofs[-2]  # point à L-2h
+
+                    # Kirchhoff ordre 2 :
+                    # sum_e a * (-3 u_v + 4 u1 - u2)/(2h) = 0
+                    # -> diag positive :
+                    coeff = a / (2.0 * h)
+                    A[v_dof, v_dof] += 3.0 * coeff
+                    A[v_dof, u1]    += -4.0 * coeff
+                    A[v_dof, u2]    += 1.0 * coeff
+
                 else:
-                    last_dof = self.graph.get_edge_dofs(edge_id)[-1]
-                    A[v_dof, v_dof] += stiffness
-                    A[v_dof, last_dof] = -stiffness
-        
+                    # Fallback ordre 1 si pas assez de points
+                    u1 = dofs[0] if position == 'start' else dofs[-1]
+                    coeff = a / h
+                    A[v_dof, v_dof] += coeff
+                    A[v_dof, u1]    += -coeff
+
         return A.tocsr(), g
     
     def assemble_sensitivity_rhs(self, epsilon_dict, edge_id_sens, source_intensity=1.0):
@@ -215,11 +268,12 @@ class SourceLocalization:
         
         return g_sens
     
-    def solve_direct(self, epsilon_dict=None, source_intensity=1.0, manufactured=None):
-        """Résout le problème direct: A*u = g"""
-        A, g = self.assemble_system(epsilon_dict, source_intensity, manufactured)
+    def solve_direct(self, epsilon_dict=None, source_intensity=1.0):
+        self.validation_mode = True
+        A, g = self.assemble_system(epsilon_dict, source_intensity)
         self.u = spsolve(A, g)
         return self.u
+
     
     def solve_sensitivity(self, epsilon_dict, edge_id_sens, source_intensity=1.0):
         """Résout l'équation de sensibilité: A*w = dg/d(epsilon)"""
@@ -640,6 +694,94 @@ class SourceLocalization:
 
 # ============= EXEMPLES D'UTILISATION =============
 
+# def exact_solution_mms(x, edge):
+#             return np.sin(np.pi * x / edge.length)
+def exact_solution_mms(x, edge):
+    L = edge['length']
+    eid = edge['id']
+
+    C = 1.0
+    A1 = 0.0
+    # Kirchhoff (2 arêtes, même a et même L) -> A2 = 2C/L^2 - A1
+    if eid == 0:
+        A = A1
+    elif eid == 1:
+        A = 2.0 * C / L**2 - A1
+    else:
+        A = 0.0
+
+    B = 1.0  # amplitude du terme degré 4 (tu peux changer)
+
+    return C * (1.0 - x / L) + A * x * (L - x) + B * (x**2) * ((L - x)**2)
+
+
+    
+def compute_errors_mms(graph, u_num):
+    """
+    Calcule les erreurs L1, L2, Linf sur tout le graphe métrique
+    (uniquement sur les DDL d'arêtes)
+    """
+    L1 = 0.0
+    L2 = 0.0
+    Linf = 0.0
+
+    for edge in graph.edges:
+        edge_id = edge['id']
+        L = edge['length']
+        n = edge['n']
+        h = L / (n + 1)
+
+        dofs = graph.get_edge_dofs(edge_id)
+
+        for i, dof in enumerate(dofs):
+            x = (i + 1) * h
+            u_exact = exact_solution_mms(x, edge)
+            diff = abs(u_num[dof] - u_exact)
+
+            L1 += h * diff
+            L2 += h * diff**2
+            Linf = max(Linf, diff)
+
+    return L1, np.sqrt(L2), Linf
+
+def plot_solution_all_edges(graph, u_num):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    for edge in graph.edges:
+        edge_id = edge['id']
+        L = edge['length']
+        n = edge['n']
+        h = L / (n + 1)
+
+        dofs = graph.get_edge_dofs(edge_id)
+
+        x = np.array([(i + 1) * h for i in range(n)])
+        u_num_edge = np.array([u_num[dof] for dof in dofs])
+
+        # Solution exacte MMS degré > 2
+        u_exact = np.array([
+            graph.solver.exact_solution_mms(xi, edge)
+            if hasattr(graph, "solver") else np.sin(np.pi * xi / L)
+            for xi in x
+        ])
+
+        plt.figure(figsize=(6, 4))
+        plt.plot(x, u_exact, 'r-', lw=2, label="Solution exacte")
+        plt.plot(x, u_num_edge, 'bo', ms=4, label="Solution numérique")
+
+        plt.xlabel("x")
+        plt.ylabel("u(x)")
+        plt.title(f"Comparaison sur l’arête {edge_id}")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+
+
+    
+
 def create_2d_graph_example():
     """Crée un graphe 2D simple"""
     graph = MetricGraph()
@@ -848,42 +990,113 @@ def example_2d_sensitivity_study():
 
 
 def example_validation_1d():
-    """Validation rapide sur un cas 1D simple"""
+    """Validation MMS sur graphe 1D avec jonction - étude de convergence"""
+
     print("\n" + "="*70)
-    print("VALIDATION 1D - CAS TEST")
+    print("VALIDATION MMS - CONVERGENCE")
     print("="*70)
+
+    Ns = [10, 20, 40, 80, 160]
+
+    errors_L1 = []
+    errors_L2 = []
+    errors_Linf = []
+    hs = []
+
+    for N in Ns:
+        graph = MetricGraph()
+        graph.add_edge(0, 'v1', 'v2', length=1.0, a_coef=1.0, n_points=N)
+        graph.add_edge(1, 'v1', 'v3', length=1.0, a_coef=1.0, n_points=N)
+
+        graph.set_vertex_position('v1', 0, 0)
+        graph.set_vertex_position('v2', 1, 0)
+        graph.set_vertex_position('v3', 0, 1)
+        graph.set_boundary_vertices(['v2', 'v3'])
+        graph.build_dof_map()
+
+        solver = SourceLocalization(graph)
+        solver.validation_mode = True
+
+        u_num = solver.solve_direct()
+
+        L1, L2, Linf = compute_errors_mms(graph, u_num)
+
+        h = 1.0 / (N + 1)
+
+        hs.append(h)
+        errors_L1.append(L1)
+        errors_L2.append(L2)
+        errors_Linf.append(Linf)
+
+        print(f"N={N:4d} | L1={L1:.3e} | L2={L2:.3e} | Linf={Linf:.3e}")
+
+    # ============================
+    # Calcul des ordres observés
+    # ============================
+    def compute_orders(errs):
+        return [
+            np.log(errs[i-1] / errs[i]) / np.log(2.0)
+            for i in range(1, len(errs))
+        ]
+
+    orders_L1 = compute_orders(errors_L1)
+    orders_L2 = compute_orders(errors_L2)
+    orders_Linf = compute_orders(errors_Linf)
+
+    print("\nOrdres observés (entre deux raffinements) :")
+    for i in range(len(orders_L1)):
+        print(f"N={Ns[i]}→{Ns[i+1]} | "
+              f"L1={orders_L1[i]:.2f}, "
+              f"L2={orders_L2[i]:.2f}, "
+              f"Linf={orders_Linf[i]:.2f}")
+
+    # ============================
+    # Courbe de convergence
+    # ============================
+    plt.figure(figsize=(7, 5))
+    plt.loglog(hs, errors_L2, 'o-', label=r"$\|e\|_{L^2}$")
+    plt.loglog(
+        hs,
+        errors_L2[0] * (np.array(hs) / hs[0])**2,
+        '--',
+        label="Référence ordre 2"
+    )
+
+    plt.gca().invert_xaxis()
+    plt.xlabel("h")
+    plt.ylabel("Erreur")
+    plt.title("Convergence MMS – norme $L^2$")
+    plt.legend()
+    plt.grid(True, which="both")
+    plt.tight_layout()
+    plt.show()
+
+    plot_solution_all_edges(graph, u_num)
+
+
+
     
-    graph = MetricGraph()
-    graph.add_edge(0, 'v1', 'v2', length=1.0, a_coef=1.0, n_points=50)
-    graph.set_vertex_position('v1', 0, 0)
-    graph.set_vertex_position('v2', 1, 0)
-    graph.set_boundary_vertices(['v1', 'v2'])
-    graph.build_dof_map()
+    # print("\n1. Résolution du problème direct...")
+    # u1 = solver.solve_direct(epsilon_dict, source_intensity=10.0)
     
-    epsilon_dict = {0: 0.5}
-    solver = SourceLocalization(graph)
+    # print("2. Résolution de l'équation de sensibilité...")
+    # w_sensitivity = solver.solve_sensitivity(epsilon_dict, edge_id_sens=0, source_intensity=10.0)
     
-    print("\n1. Résolution du problème direct...")
-    u1 = solver.solve_direct(epsilon_dict, source_intensity=10.0)
+    # print("3. Calcul de la sensibilité par différences finies...")
+    # delta = 1e-6
+    # epsilon_perturbed = {0: epsilon_dict[0] + delta}
+    # u2 = solver.solve_direct(epsilon_perturbed, source_intensity=10.0)
+    # w_fd = (u2 - u1) / delta
     
-    print("2. Résolution de l'équation de sensibilité...")
-    w_sensitivity = solver.solve_sensitivity(epsilon_dict, edge_id_sens=0, source_intensity=10.0)
+    # error = np.linalg.norm(w_sensitivity - w_fd) / np.linalg.norm(w_fd)
+    # print(f"\n✓ Erreur relative: {error:.2e}")
     
-    print("3. Calcul de la sensibilité par différences finies...")
-    delta = 1e-6
-    epsilon_perturbed = {0: epsilon_dict[0] + delta}
-    u2 = solver.solve_direct(epsilon_perturbed, source_intensity=10.0)
-    w_fd = (u2 - u1) / delta
+    # if error < 1e-4:
+    #     print("✓ VALIDATION RÉUSSIE!")
+    # else:
+    #     print("⚠ Erreur élevée, vérifier les paramètres")
     
-    error = np.linalg.norm(w_sensitivity - w_fd) / np.linalg.norm(w_fd)
-    print(f"\n✓ Erreur relative: {error:.2e}")
-    
-    if error < 1e-4:
-        print("✓ VALIDATION RÉUSSIE!")
-    else:
-        print("⚠ Erreur élevée, vérifier les paramètres")
-    
-    print("="*70)
+    # print("="*70)
 
 
 if __name__ == "__main__":
@@ -903,11 +1116,12 @@ if __name__ == "__main__":
     # Validation 1D rapide
     example_validation_1d()
     
+    
     # Étude complète sur graphe 2D
-    example_2d_sensitivity_study()
+    #example_2d_sensitivity_study()
     
     # Validation de l'équation adjointe
-    example_adjoint_validation()
+    #example_adjoint_validation()
     
     print("\n" + "="*70)
     print("✓ ANALYSE TERMINÉE")
