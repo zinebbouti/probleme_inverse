@@ -1561,14 +1561,38 @@ class SourceLocalization:
     # COÛT + GRADIENT wrt epsilon (pour l'optimisation)
     # ========================================================================
 
-    def cost_and_gradient_epsilon(self, edge_id, epsilon, u_data, source_intensity=1.0, width=0.05):
-        epsilon_dict = {edge_id: float(epsilon)}
+    def cost_and_gradient_epsilon_vector(
+        self,
+        epsilon_vec,
+        edge_ids,
+        u_data,
+        source_intensity=1.0,
+        width=0.05,
+    ):
+        """
+        Calcule J et le gradient vectoriel ∇J wrt (ε0, ε1, ...)
+        """
+        epsilon_dict = {eid: epsilon_vec[i] for i, eid in enumerate(edge_ids)}
+
+        # Problème direct
         self.solve_direct(epsilon_dict, source_intensity, width=width)
         J = self.compute_cost_functional(u_data)
 
+        # Adjoint
         self.solve_adjoint(epsilon_dict, u_data, source_intensity, width=width)
-        grad = self.compute_gradient_adjoint_epsilon(epsilon_dict, source_intensity, width=width)
+
+        # Gradient vectoriel
+        grad = np.zeros(len(edge_ids))
+        for i, eid in enumerate(edge_ids):
+            dg = self.assemble_sensitivity_rhs_epsilon(
+                {eid: epsilon_vec[i]},
+                source_intensity,
+                width,
+            )
+            grad[i] = -np.dot(self.p, dg)
+
         return J, grad
+
 
     # ========================================================================
     # LINE SEARCH (Armijo) wrt epsilon
@@ -1614,62 +1638,147 @@ class SourceLocalization:
     # GRADIENT CONJUGUÉ NON LINÉAIRE wrt epsilon
     # ========================================================================
 
-    def conjugate_gradient_epsilon(
+    # def conjugate_gradient_epsilon(
+    #     self,
+    #     edge_id,
+    #     u_data,
+    #     epsilon_init,
+    #     source_intensity=1.0,
+    #     width=0.05,
+    #     max_iter=50,
+    #     tol=1e-8,
+    #     verbose=True,
+    # ):
+    #     eps = float(epsilon_init)
+    #     J, g = self.cost_and_gradient_epsilon(
+    #         edge_id, eps, u_data, source_intensity=source_intensity, width=width
+    #     )
+    #     d = -g
+
+    #     if verbose:
+    #         print("\n" + "=" * 70)
+    #         print("INVERSION PAR GRADIENT CONJUGUÉ (ε)")
+    #         print("=" * 70)
+    #         print(f"Init  | ε = {eps:.6f} | J = {J:.3e}")
+
+    #     for k in range(max_iter):
+    #         if abs(g) < tol:
+    #             print("✓ Convergence atteinte")
+    #             break
+
+    #         eps_new = self.line_search_epsilon(
+    #             edge_id,
+    #             eps,
+    #             u_data,
+    #             d,
+    #             J,
+    #             g,
+    #             source_intensity=source_intensity,
+    #             width=width,
+    #         )
+
+    #         J_new, g_new = self.cost_and_gradient_epsilon(
+    #             edge_id, eps_new, u_data, source_intensity=source_intensity, width=width
+    #         )
+
+    #         if verbose:
+    #             print(
+    #                 f"Iter {k+1:02d} | ε = {eps_new:.6f} | "
+    #                 f"J = {J_new:.3e} | |grad| = {abs(g_new):.3e}"
+    #             )
+
+    #         beta = (g_new * g_new) / (g * g) if abs(g) > 1e-30 else 0.0
+    #         d = -g_new + beta * d
+
+    #         if g_new * d >= 0:
+    #             d = -g_new
+
+    #         eps, g, J = eps_new, g_new, J_new
+
+    #     return eps
+
+    # ========================================================================
+# GRADIENT CONJUGUÉ SÉCURISÉ (adapté à optimisation alternée)
+# ========================================================================
+
+    def conjugate_gradient_epsilon_vector(
         self,
-        edge_id,
-        u_data,
         epsilon_init,
+        edge_ids,
+        u_data,
         source_intensity=1.0,
-        width=0.05,
-        max_iter=50,
+        max_iter=100,
         tol=1e-8,
-        verbose=True,
     ):
-        eps = float(epsilon_init)
-        J, g = self.cost_and_gradient_epsilon(
-            edge_id, eps, u_data, source_intensity=source_intensity, width=width
+        eps = np.array(epsilon_init, dtype=float)
+
+        J, g = self.cost_and_gradient_epsilon_vector(
+            eps, edge_ids, u_data, source_intensity
         )
         d = -g
 
-        if verbose:
-            print("\n" + "=" * 70)
-            print("INVERSION PAR GRADIENT CONJUGUÉ (ε)")
-            print("=" * 70)
-            print(f"Init  | ε = {eps:.6f} | J = {J:.3e}")
-
         for k in range(max_iter):
-            if abs(g) < tol:
-                print("✓ Convergence atteinte")
+            if np.linalg.norm(g) < tol:
                 break
 
-            eps_new = self.line_search_epsilon(
-                edge_id,
-                eps,
-                u_data,
-                d,
-                J,
-                g,
-                source_intensity=source_intensity,
-                width=width,
-            )
+            # Line search simple
+            alpha = 1.0
+            for _ in range(10):
+                eps_try = eps + alpha * d
+                for i, eid in enumerate(edge_ids):
+                    L = self.graph.edges[eid]["length"]
+                    eps_try[i] = np.clip(eps_try[i], 0.0, L)
 
-            J_new, g_new = self.cost_and_gradient_epsilon(
-                edge_id, eps_new, u_data, source_intensity=source_intensity, width=width
-            )
-
-            if verbose:
-                print(
-                    f"Iter {k+1:02d} | ε = {eps_new:.6f} | "
-                    f"J = {J_new:.3e} | |grad| = {abs(g_new):.3e}"
+                J_try, _ = self.cost_and_gradient_epsilon_vector(
+                    eps_try, edge_ids, u_data, source_intensity
                 )
 
-            beta = (g_new * g_new) / (g * g) if abs(g) > 1e-30 else 0.0
+                if J_try < J:
+                    break
+                alpha *= 0.5
+
+            eps_new = eps + alpha * d
+            J_new, g_new = self.cost_and_gradient_epsilon_vector(
+                eps_new, edge_ids, u_data, source_intensity
+            )
+
+            beta = np.dot(g_new, g_new) / np.dot(g, g)
             d = -g_new + beta * d
 
-            if g_new * d >= 0:
-                d = -g_new
-
             eps, g, J = eps_new, g_new, J_new
+
+        return eps
+
+    # ========================================================================
+# GRADIENT PROJETÉ wrt epsilon (méthode de référence)
+# ========================================================================
+
+    def projected_gradient_epsilon_vector(
+        self,
+        epsilon_init,
+        edge_ids,
+        u_data,
+        source_intensity=1.0,
+        step=0.2,
+        max_iter=200,
+        tol=1e-8,
+    ):
+        eps = np.array(epsilon_init, dtype=float)
+
+        for k in range(max_iter):
+            J, g = self.cost_and_gradient_epsilon_vector(
+                eps, edge_ids, u_data, source_intensity
+            )
+
+            if np.linalg.norm(g) < tol:
+                break
+
+            eps -= step * g
+
+            # Projection
+            for i, eid in enumerate(edge_ids):
+                L = self.graph.edges[eid]["length"]
+                eps[i] = np.clip(eps[i], 0.0, L)
 
         return eps
 
@@ -2040,6 +2149,9 @@ class SourceLocalization:
         ax.axis("equal")
 
 
+    
+
+
 class validation : 
     def __init__(self, graph):
         self.graph = graph
@@ -2153,3 +2265,5 @@ class validation :
         A, g = self.assemble_system_val()
         self.u = spsolve(A, g)
         return self.u
+
+

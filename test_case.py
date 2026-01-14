@@ -1,894 +1,3 @@
-# from graph_creation import * 
-# from physics import *
-# from test_case import * 
-# import numpy as np
-# import matplotlib.pyplot as plt
-
-
-    
-# def plot_solution_all_edges(graph, u_num):
-#     for edge in graph.edges:
-#         edge_id = edge['id']
-#         L = edge['length']
-#         n = edge['n']
-#         h = L / (n + 1)
-
-#         dofs = graph.get_edge_dofs(edge_id)
-
-#         x = np.array([(i + 1) * h for i in range(n)])
-#         u_num_edge = np.array([u_num[dof] for dof in dofs])
-
-#         # Solution exacte MMS degré > 2
-#         u_exact = np.array([
-#             graph.solver.exact_solution_mms(xi, edge)
-#             if hasattr(graph, "solver") else np.sin(np.pi * xi / L)
-#             for xi in x
-#         ])
-
-#         plt.figure(figsize=(6, 4))
-#         plt.plot(x, u_exact, 'r-', lw=2, label="Solution exacte")
-#         plt.plot(x, u_num_edge, 'bo', ms=4, label="Solution numérique")
-
-#         plt.xlabel("x")
-#         plt.ylabel("u(x)")
-#         plt.title(f"Comparaison sur l’arête {edge_id}")
-#         plt.legend()
-#         plt.grid(True)
-#         plt.tight_layout()
-#         plt.show()
-
-
-# def create_2d_graph_example():
-#     """Crée un graphe 2D simple"""
-#     graph = MetricGraph()
-    
-#     positions = {
-#         'v0': (0, 2),
-#         'v1': (2, 2),
-#         'v2': (2, 0),
-#         'v3': (0, 0),
-#         'v4': (1, 1),
-#     }
-    
-#     for v_id, pos in positions.items():
-#         graph.set_vertex_position(v_id, pos[0], pos[1])
-    
-#     graph.add_edge(0, 'v3', 'v2', length=2.0, a_coef=1.0, n_points=30)
-#     graph.add_edge(1, 'v3', 'v0', length=2.0, a_coef=1.0, n_points=30)
-#     graph.add_edge(2, 'v3', 'v4', length=np.sqrt(2), a_coef=1.0, n_points=20)
-    
-#     graph.set_boundary_vertices(['v0', 'v1', 'v2'])
-    
-#     return graph
-
-
-# def example_validation_complete():
-#     """
-#     Cas test 2D complet :
-#     - génération des données
-#     - validation du gradient (FD / sensibilité / adjoint)
-#     - inversion de l'intensité α par gradient conjugué
-#     - visualisations finales
-#     """
-
-#     print("\n" + "="*80)
-#     print("CAS TEST 2D – PROBLÈME DIRECT + ADJOINT + INVERSION (α)")
-#     print("="*80)
-
-#     # ============================================================
-#     # 1. Création du graphe
-#     # ============================================================
-#     graph = create_2d_graph_example()
-#     graph.build_dof_map()
-
-#     print(f"\nNombre total de DDL: {graph.n_dof}")
-
-#     print("\n>>> Structure du graphe métrique")
-#     graph.plot_graph(title="Graphe métrique – cas test 2D")
-
-#     # ============================================================
-#     # 2. Définition de la vraie source
-#     # ============================================================
-#     epsilon_dict = {
-#         0: 1.0,   # arête 0
-#         2: 0.7,   # arête 2
-#     }
-#     alpha_exact = 10.0
-
-#     # ============================================================
-#     # 3. Création du solveur
-#     # ============================================================
-#     solver = SourceLocalization(graph)
-
-#     # ============================================================
-#     # 4. Génération des données observées
-#     # ============================================================
-#     print("\n>>> Génération des données observées")
-
-#     u_exact = solver.solve_direct(epsilon_dict, alpha_exact)
-
-#     noise_level = 0.01
-#     np.random.seed(0)  # reproductibilité
-#     u_data = u_exact + noise_level * np.random.randn(len(u_exact))
-
-#     # ============================================================
-#     # 5. VALIDATION DU GRADIENT
-#     # ============================================================
-#     print("\n" + "="*80)
-#     print("VALIDATION DU GRADIENT dJ/dα")
-#     print("="*80)
-
-#     results = solver.validate_gradient_three_methods(
-#         epsilon_dict=epsilon_dict,
-#         u_data=u_data,
-#         source_intensity=alpha_exact,
-#         delta=None
-#     )
-
-#     if not results["validation_passed"]:
-#         print("\n⚠ ATTENTION : validation du gradient non parfaite")
-#     else:
-#         print("\n✓ Validation du gradient réussie")
-
-#     # ============================================================
-#     # 6. INVERSION PAR GRADIENT CONJUGUÉ
-#     # ============================================================
-#     print("\n" + "="*80)
-#     print("INVERSION DE L'INTENSITÉ DE LA SOURCE (α)")
-#     print("="*80)
-
-#     alpha_initial = 2.0
-
-#     alpha_identified = solver.conjugate_gradient_alpha(
-#         epsilon_dict=epsilon_dict,
-#         u_data=u_data,
-#         alpha_init=alpha_initial,
-#         max_iter=30,
-#         tol=1e-10,
-#         verbose=True
-#     )
-
-#     print("\n" + "="*60)
-#     print("RÉSULTAT FINAL")
-#     print("="*60)
-#     print(f"Alpha exact      : {alpha_exact:.6f}")
-#     print(f"Alpha initial    : {alpha_initial:.6f}")
-#     print(f"Alpha identifié  : {alpha_identified:.6f}")
-#     print(f"Erreur relative  : "
-#           f"{abs(alpha_identified - alpha_exact) / alpha_exact:.3e}")
-
-#     # ============================================================
-#     # 7. VISUALISATIONS FINALES (solution identifiée)
-#     # ============================================================
-#     print("\n>>> Visualisations finales")
-
-#     solver.solve_direct(epsilon_dict, alpha_identified)
-
-#     solver.plot_solution_on_graph(
-#         epsilon_dict,
-#         title="Solution u après inversion (α identifié)"
-#     )
-
-#     solver.solve_sensitivity_alpha(epsilon_dict, alpha_identified)
-#     solver.plot_sensitivity_on_graph(
-#         epsilon_dict,
-#         title="Sensibilité w = ∂u/∂α (α identifié)"
-#     )
-
-#     solver.solve_adjoint(epsilon_dict, u_data, alpha_identified)
-#     solver.plot_adjoint_on_graph(
-#         epsilon_dict,
-#         title="État adjoint p (α identifié)"
-#     )
-
-#     solver.plot_all_results(epsilon_dict, u_data)
-
-#     return solver, graph, results
-
-
-
-
-# def example_adjoint_validation():
-#     """
-#     Validation de l'équation adjointe par comparaison avec différences finies
-    
-#     EXPLICATION DE LA MÉTHODE ADJOINTE:
-#     ====================================
-    
-#     1. PROBLÈME D'OPTIMISATION:
-#        min J(ε) = 1/2 ∫(u(ε) - u_data)² dx
-       
-#        où u(ε) est solution de: A·u = g(ε)
-    
-#     2. CALCUL DU GRADIENT:
-       
-#        a) MÉTHODE NAÏVE (différences finies):
-#           Pour N paramètres → N+1 résolutions du problème direct
-#           dJ/dε_i ≈ [J(ε + δe_i) - J(ε)] / δ
-#           COÛT: O(N) résolutions
-       
-#        b) MÉTHODE ADJOINTE (smart):
-#           - Résoudre une fois: A·u = g(ε)
-#           - Résoudre une fois: A^T·p = -∂J/∂u
-#           - Calculer: dJ/dε = -p^T · ∂g/∂ε
-#           COÛT: O(1) résolutions (2 au total, indépendant de N!)
-    
-#     3. POURQUOI ÇA MARCHE?
-       
-#        Par la règle de dérivation en chaîne:
-#        dJ/dε = (∂J/∂u)^T · (du/dε)
-       
-#        Or du/dε satisfait: A·(du/dε) = ∂g/∂ε
-       
-#        En introduisant l'adjoint p tel que: A^T·p = -∂J/∂u
-#        On obtient par produit scalaire:
-#        dJ/dε = -p^T · ∂g/∂ε
-       
-#        → Pas besoin de calculer du/dε explicitement !
-    
-#     4. INTERPRÉTATION PHYSIQUE:
-#        - u : état direct (propagation de la source vers les mesures)
-#        - p : état adjoint (rétro-propagation de l'erreur)
-#        - p indique comment chaque point influence la fonctionnelle J
-#     """
-#     print("\n" + "="*70)
-#     print("VALIDATION DE L'ÉQUATION ADJOINTE")
-#     print("="*70)
-#     print("\nCette validation compare deux méthodes de calcul du gradient:")
-#     print("  • Méthode adjointe (efficace): 2 résolutions")
-#     print("  • Différences finies (coûteuse): N+1 résolutions")
-#     print("="*70)
-    
-#     # Créer le graphe
-#     graph = create_2d_graph_example()
-#     graph.build_dof_map()
-    
-#     # Positions des sources
-#     epsilon_dict = {0: 1.5, 1: 0.7}
-    
-#     # Paramètres
-#     source_intensity = 10.0
-#     varpi = 0.0  # Pas de terme de flux pour simplifier
-    
-#     print("\n1. Résolution du problème direct...")
-#     solver = SourceLocalization(graph)
-#     u = solver.solve_direct(epsilon_dict, source_intensity)
-    
-#     # Créer des données synthétiques (légèrement bruitées)
-#     u_data = u + 0.01 * np.random.randn(len(u))
-#     flux_data = {v: 0.0 for v in graph.boundary_vertices}
-    
-#     # Calculer la fonctionnelle
-#     J = solver.compute_cost_functional(u, u_data, flux_data, varpi)
-#     print(f"Fonctionnelle J = {J:.6e}")
-    
-#     print("\n2. Résolution de l'équation adjointe...")
-#     p = solver.solve_adjoint(u_data, flux_data, varpi, epsilon_dict, source_intensity)
-    
-#     # Visualiser l'état adjoint
-#     print("\n3. Visualisation de l'état adjoint...")
-#     solver.plot_adjoint_on_graph(epsilon_dict, title="État adjoint p(x)")
-    
-#     print("\n4. Calcul des gradients via méthode adjointe...")
-#     gradients_adjoint = solver.compute_gradient_all_edges(epsilon_dict, source_intensity)
-    
-#     print("\n5. Calcul des gradients par différences finies (validation)...")
-#     gradients_fd = {}
-#     for edge_id in epsilon_dict.keys():
-#         grad_fd = solver.compute_gradient_finite_diff(
-#             epsilon_dict, edge_id, u_data, flux_data, source_intensity, varpi
-#         )
-#         gradients_fd[edge_id] = grad_fd
-    
-#     # Comparaison
-#     print("\n" + "="*70)
-#     print("COMPARAISON DES GRADIENTS")
-#     print("="*70)
-#     print("\nInterprétation:")
-#     print("  • Gradient positif → déplacer ε vers la droite AUGMENTE J")
-#     print("  • Gradient négatif → déplacer ε vers la droite DIMINUE J")
-#     print("  • |Gradient| grand → forte sensibilité de J à ε")
-#     print("-"*70)
-#     print(f"{'Arête':<10} {'Adjoint':<20} {'Diff. Finies':<20} {'Erreur Rel.':<15}")
-#     print("-"*70)
-    
-#     for edge_id in epsilon_dict.keys():
-#         grad_adj = gradients_adjoint[edge_id]
-#         grad_fd = gradients_fd[edge_id]
-        
-#         if abs(grad_fd) > 1e-10:
-#             err_rel = abs(grad_adj - grad_fd) / abs(grad_fd)
-#         else:
-#             err_rel = abs(grad_adj - grad_fd)
-        
-#         print(f"{edge_id:<10} {grad_adj:<20.8e} {grad_fd:<20.8e} {err_rel:<15.2e}")
-    
-#     print("="*70)
-    
-#     # Vérification globale
-#     all_errors = [abs(gradients_adjoint[e] - gradients_fd[e]) / abs(gradients_fd[e]) 
-#                   for e in epsilon_dict.keys() if abs(gradients_fd[e]) > 1e-10]
-    
-#     max_error = max(all_errors) if all_errors else 0.0
-    
-#     print(f"\nErreur relative maximale: {max_error:.2e}")
-    
-#     # Seuil de validation plus réaliste pour les différences finies
-#     if max_error < 1e-3:
-#         print("✓ VALIDATION RÉUSSIE! Les gradients adjoints sont corrects.")
-#         print("  (Erreur < 0.1% : excellente précision)")
-#     elif max_error < 1e-2:
-#         print("✓ VALIDATION ACCEPTABLE. Les gradients adjoints sont fiables.")
-#         print("  (Erreur < 1% : bonne précision)")
-#     else:
-#         print("⚠ Attention: erreurs importantes détectées.")
-#         print("  Vérifier l'implémentation ou réduire delta.")
-    
-#     print("="*70)
-
-# def exact_solution_mms(x, edge):
-#     L = edge['length']
-#     eid = edge['id']
-
-#     C = 1.0
-#     A1 = 0.0
-#     # Kirchhoff (2 arêtes, même a et même L) -> A2 = 2C/L^2 - A1
-#     if eid == 0:
-#         A = A1
-#     elif eid == 1:
-#         A = 2.0 * C / L**2 - A1
-#     else:
-#         A = 0.0
-
-#     B = 1.0  # amplitude du terme degré 4 (tu peux changer)
-
-#     return C * (1.0 - x / L) + A * x * (L - x) + B * (x**2) * ((L - x)**2)
-    
-# def compute_errors_mms(graph, u_num):
-#     """
-#     Calcule les erreurs L1, L2, Linf sur tout le graphe métrique
-#     (uniquement sur les DDL d'arêtes)
-#     """
-#     L1 = 0.0
-#     L2 = 0.0
-#     Linf = 0.0
-
-#     for edge in graph.edges:
-#         edge_id = edge['id']
-#         L = edge['length']
-#         n = edge['n']
-#         h = L / (n + 1)
-
-#         dofs = graph.get_edge_dofs(edge_id)
-
-#         for i, dof in enumerate(dofs):
-#             x = (i + 1) * h
-#             u_exact = exact_solution_mms(x, edge)
-#             diff = abs(u_num[dof] - u_exact)
-
-#             L1 += h * diff
-#             L2 += h * diff**2
-#             Linf = max(Linf, diff)
-
-#     return L1, np.sqrt(L2), Linf
-
-# def validation_DF():
-
-#     print("\n" + "="*70)
-#     print("VALIDATION MMS - CONVERGENCE")
-#     print("="*70)
-
-#     Ns = [10, 20, 40, 80, 160]
-
-#     errors_L1 = []
-#     errors_L2 = []
-#     errors_Linf = []
-#     hs = []
-
-#     for N in Ns:
-#         graph = MetricGraph()
-#         graph.add_edge(0, 'v1', 'v2', length=1.0, a_coef=1.0, n_points=N)
-#         graph.add_edge(1, 'v1', 'v3', length=1.0, a_coef=1.0, n_points=N)
-
-#         graph.set_vertex_position('v1', 0, 0)
-#         graph.set_vertex_position('v2', 1, 0)
-#         graph.set_vertex_position('v3', 0, 1)
-#         graph.set_boundary_vertices(['v2', 'v3'])
-#         graph.build_dof_map()
-
-#         solver = validation(graph)
-
-#         u_num = solver.solve_direct_val()
-
-#         L1, L2, Linf = compute_errors_mms(graph, u_num)
-
-#         h = 1.0 / (N + 1)
-
-#         hs.append(h)
-#         errors_L1.append(L1)
-#         errors_L2.append(L2)
-#         errors_Linf.append(Linf)
-
-#         print(f"N={N:4d} | L1={L1:.3e} | L2={L2:.3e} | Linf={Linf:.3e}")
-
-#     # ============================
-#     # Calcul des ordres observés
-#     # ============================
-#     def compute_orders(errs):
-#         return [
-#             np.log(errs[i-1] / errs[i]) / np.log(2.0)
-#             for i in range(1, len(errs))
-#         ]
-
-#     orders_L1 = compute_orders(errors_L1)
-#     orders_L2 = compute_orders(errors_L2)
-#     orders_Linf = compute_orders(errors_Linf)
-
-#     print("\nOrdres observés (entre deux raffinements) :")
-#     for i in range(len(orders_L1)):
-#         print(f"N={Ns[i]}→{Ns[i+1]} | "
-#               f"L1={orders_L1[i]:.2f}, "
-#               f"L2={orders_L2[i]:.2f}, "
-#               f"Linf={orders_Linf[i]:.2f}")
-
-#     # ============================
-#     # Courbe de convergence
-#     # ============================
-#     plt.figure(figsize=(7, 5))
-#     plt.loglog(hs, errors_L2, 'o-', label=r"$\|e\|_{L^2}$")
-#     plt.loglog(
-#         hs,
-#         errors_L2[0] * (np.array(hs) / hs[0])**2,
-#         '--',
-#         label="Référence ordre 2"
-#     )
-
-#     plt.gca().invert_xaxis()
-#     plt.xlabel("h")
-#     plt.ylabel("Erreur")
-#     plt.title("Convergence MMS – norme $L^2$")
-#     plt.legend()
-#     plt.grid(True, which="both")
-#     plt.tight_layout()
-#     plt.show()
-
-#     plot_solution_all_edges(graph, u_num)
-
-
-##########################################################################################
-
-##########################################################################################
-##########################################################################################
-
-# from graph_creation import MetricGraph
-# from physics import SourceLocalizationEpsilon
-# import numpy as np
-# import matplotlib.pyplot as plt
-
-
-# # ============================================================================
-# # FONCTIONS DE CRÉATION DE GRAPHES
-# # ============================================================================
-
-# def create_simple_Y_graph():
-#     """Crée un graphe en Y simple pour les tests"""
-#     graph = MetricGraph()
-    
-#     positions = {
-#         'v0': (0, 0),    # Centre
-#         'v1': (1, 0),    # Droite
-#         'v2': (0, 1),    # Haut
-#         'v3': (-1, 0),   # Gauche
-#     }
-    
-#     for v_id, pos in positions.items():
-#         graph.set_vertex_position(v_id, pos[0], pos[1])
-    
-#     graph.add_edge(0, 'v0', 'v1', length=1.0, a_coef=1.0, n_points=40)
-#     graph.add_edge(1, 'v0', 'v2', length=1.0, a_coef=1.0, n_points=40)
-#     graph.add_edge(2, 'v0', 'v3', length=1.0, a_coef=1.0, n_points=40)
-    
-#     graph.set_boundary_vertices(['v1', 'v2', 'v3'])
-    
-#     return graph
-
-
-# def create_2d_graph_example():
-#     """Crée un graphe 2D plus complexe"""
-#     graph = MetricGraph()
-    
-#     positions = {
-#         'v0': (0, 2),
-#         'v1': (2, 2),
-#         'v2': (2, 0),
-#         'v3': (0, 0),
-#         'v4': (1, 1),
-#     }
-    
-#     for v_id, pos in positions.items():
-#         graph.set_vertex_position(v_id, pos[0], pos[1])
-    
-#     graph.add_edge(0, 'v3', 'v2', length=2.0, a_coef=1.0, n_points=50)
-#     graph.add_edge(1, 'v3', 'v0', length=2.0, a_coef=1.0, n_points=50)
-#     graph.add_edge(2, 'v3', 'v4', length=np.sqrt(2), a_coef=1.0, n_points=30)
-    
-#     graph.set_boundary_vertices(['v0', 'v1', 'v2'])
-    
-#     return graph
-
-
-# # ============================================================================
-# # TEST 1 : VALIDATION DES GRADIENTS dJ/dε (3 MÉTHODES)
-# # ============================================================================
-
-# def test_gradient_validation():
-#     """
-#     Validation complète des 3 méthodes de calcul de dJ/dε
-    
-#     Vérifie que :
-#     1. Les 3 méthodes donnent le même gradient
-#     2. Les valeurs de J sont cohérentes
-#     3. L'erreur entre sensibilité et adjointe est < 1e-14
-#     """
-#     print("\n" + "="*80)
-#     print("TEST : VALIDATION DES GRADIENTS dJ/dε")
-#     print("="*80)
-    
-#     # 1. Création du graphe
-#     graph = create_simple_Y_graph()
-#     graph.build_dof_map()
-    
-#     # 2. Configuration
-#     epsilon_true = 0.6
-#     edge_id_source = 0
-    
-#     print(f"\nConfiguration :")
-#     print(f"  Position source : ε = {epsilon_true}")
-#     print(f"  Arête source    : {edge_id_source}")
-#     print(f"  Intensité fixée : α = 1.0\n")
-    
-#     # 3. Génération données synthétiques
-#     solver = SourceLocalizationEpsilon(graph)
-#     epsilon_dict_true = {edge_id_source: epsilon_true}
-    
-#     u_true = solver.solve_direct(epsilon_dict_true)
-#     noise_level = 0.01
-#     u_data = u_true + noise_level * np.random.randn(len(u_true))
-    
-#     # 4. Position de test (différente de la vraie)
-#     epsilon_test = 0.35
-#     epsilon_dict_test = {edge_id_source: epsilon_test}
-    
-#     print(f"Test du gradient à ε = {epsilon_test}\n")
-    
-#     # 5. Appel de la validation (dans physics.py)
-#     results = solver.validate_gradient_three_methods(
-#         epsilon_dict_test, u_data, edge_id_source
-#     )
-    
-#     # 6. Résumé final
-#     print("\n" + "="*80)
-#     print("RÉSUMÉ DE LA VALIDATION")
-#     print("="*80)
-#     print(f"\nCoût J(ε) = {results['J']:.6e}")
-#     print(f"\nGradients calculés :")
-#     print(f"  • Différences finies : {results['grad_fd']:.12e}")
-#     print(f"  • Sensibilité directe: {results['grad_sensitivity']:.12e}")
-#     print(f"  • Méthode adjointe   : {results['grad_adjoint']:.12e}")
-    
-#     print(f"\nErreurs relatives :")
-#     print(f"  • Sensibilité vs FD  : {results['error_sens_vs_fd']:.3e}")
-#     print(f"  • Adjointe vs FD     : {results['error_adj_vs_fd']:.3e}")
-#     print(f"  • Sensibilité vs Adj : {results['error_sens_vs_adj']:.3e}")
-    
-#     # Critère de validation
-#     if results['validation_passed']:
-#         print(f"\n{'✓'*40}")
-#         print("✓✓ VALIDATION RÉUSSIE !")
-#         print(f"{'✓'*40}")
-#     else:
-#         print(f"\n{'⚠'*40}")
-#         print("⚠ Validation partielle - vérifier les erreurs")
-#         print(f"{'⚠'*40}")
-    
-#     print("="*80 + "\n")
-    
-#     return results
-
-
-# # ============================================================================
-# # TEST 2 : OPTIMISATION PAR MÉTHODE ADJOINTE
-# # ============================================================================
-
-# def test_optimization_adjoint():
-#     """
-#     Optimisation de ε par gradient conjugué (méthode adjointe)
-    
-#     Objectif : Retrouver la position de la source à partir de mesures
-#     """
-#     print("\n" + "="*80)
-#     print("TEST : OPTIMISATION PAR MÉTHODE ADJOINTE")
-#     print("="*80)
-    
-#     # 1. Graphe
-#     graph = create_simple_Y_graph()
-#     graph.build_dof_map()
-    
-#     # 2. Génération données
-#     epsilon_true = 0.65
-#     edge_id_source = 0
-    
-#     print(f"\nCONFIGURATION :")
-#     print(f"  Position vraie : ε_true = {epsilon_true}")
-#     print(f"  Intensité fixée: α = 1.0")
-    
-#     solver = SourceLocalizationEpsilon(graph)
-#     epsilon_dict_true = {edge_id_source: epsilon_true}
-    
-#     u_true = solver.solve_direct(epsilon_dict_true)
-#     u_data = u_true + 0.02 * np.random.randn(len(u_true))
-    
-#     # 3. Optimisation
-#     epsilon_init = 0.2
-#     print(f"  Position initiale : ε_init = {epsilon_init}\n")
-    
-#     result = solver.optimize_cg_adjoint(
-#         epsilon_init, edge_id_source, u_data,
-#         max_iter=30, tol=1e-8
-#     )
-    
-#     # 4. Résultats
-#     print(f"\n{'='*80}")
-#     print(f"RÉSULTATS FINAUX :")
-#     print(f"{'='*80}")
-#     print(f"Position vraie      : ε_true = {epsilon_true}")
-#     print(f"Position trouvée    : ε*      = {result.x[0]:.6f}")
-#     print(f"Erreur absolue      : |ε* - ε_true| = {abs(result.x[0] - epsilon_true):.6e}")
-#     print(f"Erreur relative     : {abs(result.x[0] - epsilon_true)/epsilon_true * 100:.3f}%")
-#     print(f"Coût final J(ε*)    : {result.fun:.6e}")
-#     print(f"Convergence         : {'OUI' if result.success else 'NON'}")
-#     print(f"Nombre d'itérations : {result.nit}")
-#     print(f"{'='*80}\n")
-    
-#     return result
-
-
-# # ============================================================================
-# # TEST 3 : COMPARAISON ADJOINTE VS SENSIBILITÉ
-# # ============================================================================
-
-# def test_comparison_adjoint_vs_sensitivity():
-#     """
-#     Compare les deux méthodes d'optimisation
-    
-#     Vérifie que les deux approches convergent vers la même solution
-#     """
-#     print("\n" + "="*80)
-#     print("TEST : COMPARAISON ADJOINTE VS SENSIBILITÉ")
-#     print("="*80)
-    
-#     # 1. Graphe
-#     graph = create_2d_graph_example()
-#     graph.build_dof_map()
-    
-#     # 2. Données
-#     epsilon_true = 1.2
-#     edge_id_source = 0
-    
-#     print(f"\nCONFIGURATION :")
-#     print(f"  Position vraie : ε_true = {epsilon_true}")
-#     print(f"  Arête source   : {edge_id_source}")
-    
-#     solver_adj = SourceLocalizationEpsilon(graph)
-#     epsilon_dict_true = {edge_id_source: epsilon_true}
-    
-#     u_true = solver_adj.solve_direct(epsilon_dict_true)
-#     u_data = u_true + 0.01 * np.random.randn(len(u_true))
-    
-#     # 3. Optimisation adjointe
-#     print("\n" + "-"*80)
-#     print("OPTIMISATION 1/2 : MÉTHODE ADJOINTE")
-#     print("-"*80)
-    
-#     epsilon_init = 0.5
-#     result_adj = solver_adj.optimize_cg_adjoint(
-#         epsilon_init, edge_id_source, u_data, max_iter=25
-#     )
-#     history_adj = solver_adj.history.copy()
-    
-#     # 4. Optimisation sensibilité
-#     print("\n" + "-"*80)
-#     print("OPTIMISATION 2/2 : MÉTHODE SENSIBILITÉ")
-#     print("-"*80)
-    
-#     solver_sens = SourceLocalizationEpsilon(graph)
-#     result_sens = solver_sens.optimize_cg_sensitivity(
-#         epsilon_init, edge_id_source, u_data, max_iter=25
-#     )
-#     history_sens = solver_sens.history.copy()
-    
-#     # 5. Comparaison
-#     print(f"\n{'='*80}")
-#     print(f"COMPARAISON DES RÉSULTATS")
-#     print(f"{'='*80}")
-#     print(f"\n{'Méthode':<20} {'ε optimal':<15} {'J final':<15} {'Iter':<8} {'Erreur |ε-ε_true|'}")
-#     print("-"*80)
-#     print(f"{'Adjointe':<20} {result_adj.x[0]:<15.6f} {result_adj.fun:<15.6e} {result_adj.nit:<8} {abs(result_adj.x[0]-epsilon_true):.6e}")
-#     print(f"{'Sensibilité':<20} {result_sens.x[0]:<15.6f} {result_sens.fun:<15.6e} {result_sens.nit:<8} {abs(result_sens.x[0]-epsilon_true):.6e}")
-#     print(f"{'Vraie valeur':<20} {epsilon_true:<15.6f} {'':<15} {'':<8}")
-#     print("="*80)
-    
-#     # 6. Analyse de la différence
-#     diff_epsilon = abs(result_adj.x[0] - result_sens.x[0])
-#     diff_J = abs(result_adj.fun - result_sens.fun)
-    
-#     print(f"\nDIFFÉRENCES ENTRE LES MÉTHODES :")
-#     print(f"  • Position : |ε_adj - ε_sens| = {diff_epsilon:.6e}")
-#     print(f"  • Coût     : |J_adj - J_sens| = {diff_J:.6e}")
-    
-#     if diff_epsilon < 1e-6 and diff_J < 1e-10:
-#         print(f"\n✓✓ Les deux méthodes convergent vers la MÊME solution!")
-#     else:
-#         print(f"\n⚠ Différences détectées - peut être dû à:")
-#         print(f"    - Critère d'arrêt différent")
-#         print(f"    - Nombre d'itérations insuffisant")
-    
-#     print("="*80 + "\n")
-    
-#     # 7. Graphiques
-#     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    
-#     axes[0].plot(history_adj['epsilon'], 'o-', label='Adjointe', linewidth=2, markersize=6)
-#     axes[0].plot(history_sens['epsilon'], 's--', label='Sensibilité', linewidth=2, markersize=6)
-#     axes[0].axhline(epsilon_true, color='red', linestyle=':', linewidth=2, label='ε_true')
-#     axes[0].set_xlabel('Itération', fontsize=11)
-#     axes[0].set_ylabel('Position ε', fontsize=11)
-#     axes[0].set_title('Convergence de ε', fontweight='bold')
-#     axes[0].legend(fontsize=10)
-#     axes[0].grid(True, alpha=0.3)
-    
-#     axes[1].semilogy(history_adj['J'], 'o-', label='Adjointe', linewidth=2, markersize=6)
-#     axes[1].semilogy(history_sens['J'], 's--', label='Sensibilité', linewidth=2, markersize=6)
-#     axes[1].set_xlabel('Itération', fontsize=11)
-#     axes[1].set_ylabel('J(ε)', fontsize=11)
-#     axes[1].set_title('Décroissance du coût', fontweight='bold')
-#     axes[1].legend(fontsize=10)
-#     axes[1].grid(True, alpha=0.3)
-    
-#     axes[2].semilogy(history_adj['grad_norm'], 'o-', label='Adjointe', linewidth=2, markersize=6)
-#     axes[2].semilogy(history_sens['grad_norm'], 's--', label='Sensibilité', linewidth=2, markersize=6)
-#     axes[2].set_xlabel('Itération', fontsize=11)
-#     axes[2].set_ylabel('|∇J|', fontsize=11)
-#     axes[2].set_title('Norme du gradient', fontweight='bold')
-#     axes[2].legend(fontsize=10)
-#     axes[2].grid(True, alpha=0.3)
-    
-#     plt.suptitle('Comparaison Adjointe vs Sensibilité', fontsize=14, fontweight='bold')
-#     plt.tight_layout()
-#     plt.show()
-    
-#     return result_adj, result_sens
-
-
-# # ============================================================================
-# # TEST 4 : SENSIBILITÉ AU BRUIT
-# # ============================================================================
-
-# def test_noise_sensitivity():
-#     """
-#     Analyse l'impact du bruit sur la reconstruction
-#     """
-#     print("\n" + "="*80)
-#     print("TEST : SENSIBILITÉ AU BRUIT")
-#     print("="*80)
-    
-#     graph = create_simple_Y_graph()
-#     graph.build_dof_map()
-    
-#     epsilon_true = 0.7
-#     edge_id_source = 0
-#     epsilon_init = 0.2
-    
-#     solver = SourceLocalizationEpsilon(graph)
-#     epsilon_dict_true = {edge_id_source: epsilon_true}
-#     u_true = solver.solve_direct(epsilon_dict_true)
-    
-#     noise_levels = [0.001, 0.005, 0.01, 0.02, 0.05]
-#     results = []
-    
-#     print(f"\nPosition vraie : ε_true = {epsilon_true}")
-#     print(f"Position initiale : ε_init = {epsilon_init}\n")
-#     print("-"*80)
-#     print(f"{'Bruit %':<12} {'ε optimal':<15} {'Erreur':<15} {'J final':<15}")
-#     print("-"*80)
-    
-#     for noise in noise_levels:
-#         u_data = u_true + noise * np.random.randn(len(u_true))
-        
-#         solver_test = SourceLocalizationEpsilon(graph)
-#         result = solver_test.optimize_cg_adjoint(
-#             epsilon_init, edge_id_source, u_data, max_iter=30, tol=1e-8
-#         )
-        
-#         error = abs(result.x[0] - epsilon_true)
-#         results.append((noise, result.x[0], error, result.fun))
-        
-#         print(f"{noise*100:<12.1f} {result.x[0]:<15.6f} {error:<15.6e} {result.fun:<15.6e}")
-    
-#     print("-"*80 + "\n")
-    
-#     # Graphique
-#     noises = [r[0]*100 for r in results]
-#     errors = [r[2] for r in results]
-    
-#     plt.figure(figsize=(8, 5))
-#     plt.semilogy(noises, errors, 'o-', linewidth=2, markersize=8)
-#     plt.xlabel('Niveau de bruit %', fontsize=12)
-#     plt.ylabel('Erreur |ε* - ε_true|', fontsize=12)
-#     plt.title('Impact du bruit sur la reconstruction', fontsize=14, fontweight='bold')
-#     plt.grid(True, alpha=0.3)
-#     plt.tight_layout()
-#     plt.show()
-    
-#     return results
-
-
-# # ============================================================================
-# # VALIDATION MMS 1D (fonction manquante)
-# # ============================================================================
-
-# def validation_DF():
-#     """
-#     Validation par méthode des solutions manufacturées (MMS)
-#     Test de convergence en h²
-#     """
-#     print("\n" + "="*80)
-#     print("VALIDATION MMS 1D - CONVERGENCE h²")
-#     print("="*80)
-#     print("\nCette fonction n'est pas encore implémentée.")
-#     print("Elle nécessite une classe de validation spécifique.")
-#     print("Pour l'instant, utilisez les modes 2-6.\n")
-#     print("="*80 + "\n")
-
-
-# # ============================================================================
-# # MAIN
-# # ============================================================================
-
-# if __name__ == "__main__":
-#     import sys
-    
-#     print("\n" + "="*80)
-#     print("TESTS DE LOCALISATION DE SOURCE")
-#     print("="*80)
-#     print("\nTests disponibles :")
-#     print("  1. Validation gradients (3 méthodes)")
-#     print("  2. Optimisation adjointe")
-#     print("  3. Comparaison Adjointe vs Sensibilité")
-#     print("  4. Sensibilité au bruit")
-#     print("  0. Quitter")
-#     print("="*80)
-    
-#     try:
-#         choix = int(input("\nVotre choix: "))
-#     except:
-#         choix = 1
-    
-#     if choix == 1:
-#         test_gradient_validation()
-#     elif choix == 2:
-#         test_optimization_adjoint()
-#     elif choix == 3:
-#         test_comparison_adjoint_vs_sensitivity()
-#     elif choix == 4:
-#         test_noise_sensitivity()
-#     elif choix == 0:
-#         sys.exit(0)
-#     else:
-#         print("Choix invalide, lancement du test 1")
-#         test_gradient_validation()
-
-
 from graph_creation import * 
 from physics import *
 from test_case import * 
@@ -919,23 +28,84 @@ def create_simple_2d_graph():
         0, 'v0', 'v2',
         length=np.sqrt(1.0**2 + 1.5**2),
         a_coef=1.0,
-        n_points=40
+        n_points=1000
     )
     graph.add_edge(
         1, 'v1', 'v2',
         length=np.sqrt(1.0**2 + 1.5**2),
         a_coef=1.0,
-        n_points=40
+        n_points=1000
     )
 
     graph.set_boundary_vertices(['v0', 'v1'])
     graph.build_dof_map()
 
     return graph
+def create_simple_Y_graph():
+    """Crée un graphe en Y simple pour les tests"""
+    graph = MetricGraph()
+    
+    positions = {
+        'v0': (0, 0),    # Centre
+        'v1': (1, 0),    # Droite (bord)
+        'v2': (0, 1),    # Haut   (bord)
+        'v3': (-1, 0),   # Gauche (bord)
+    }
+    
+    for v_id, (x, y) in positions.items():
+        graph.set_vertex_position(v_id, x, y)
+    
+    graph.add_edge(0, 'v0', 'v1', length=1.0, a_coef=1.0, n_points=40)
+    graph.add_edge(1, 'v0', 'v2', length=1.0, a_coef=1.0, n_points=40)
+    graph.add_edge(2, 'v0', 'v3', length=1.0, a_coef=1.0, n_points=40)
+
+    # Sommets au bord (conditions de Dirichlet)
+    graph.set_boundary_vertices(['v1', 'v2', 'v3'])
+
+    # ✅ INDISPENSABLE : construit dof_start/dof_end
+    graph.build_dof_map()
+
+    return graph
+
+
+def create_decoupled_2d_graph():
+    """
+    Graphe avec deux arêtes totalement découplées
+    → validation adjoint parfaite (10^-16)
+    """
+    graph = MetricGraph()
+
+    # Sommets
+    graph.set_vertex_position("v0", 0.0, 0.0)
+    graph.set_vertex_position("v1", 1.0, 0.0)
+
+    graph.set_vertex_position("v2", 0.0, 1.0)
+    graph.set_vertex_position("v3", 1.0, 1.0)
+
+    # Arête 0
+    graph.add_edge(
+        0, "v0", "v1",
+        length=1.0,
+        a_coef=1.0,
+        n_points=40
+    )
+
+    # Arête 1
+    graph.add_edge(
+        1, "v2", "v3",
+        length=1.0,
+        a_coef=1.0,
+        n_points=40
+    )
+
+    graph.set_boundary_vertices(["v0", "v1", "v2", "v3"])
+    graph.build_dof_map()
+
+    return graph
 
 
 # ============================================================
-# TEST INVERSE COMPLET
+# TEST INVERSE COMPLET - UNE SOURCE
 # ============================================================
 
 def test_inverse_source_localization():
@@ -946,7 +116,7 @@ def test_inverse_source_localization():
     # ------------------------------------------------------------
     # 1. Création du graphe
     # ------------------------------------------------------------
-    graph = create_simple_2d_graph()
+    graph = create_simple_Y_graph()
     graph.plot_graph(title="Graphe 2D – test inverse")
 
     solver = SourceLocalization(graph)
@@ -956,7 +126,7 @@ def test_inverse_source_localization():
     # ------------------------------------------------------------
     edge_id = 0
     epsilon_true = 0.9
-    source_intensity = 10.0
+    source_intensity = 1
 
     epsilon_true_dict = {edge_id: epsilon_true}
 
@@ -970,9 +140,9 @@ def test_inverse_source_localization():
         source_intensity
     )
 
-    noise_level = 0.01
+    noise_level = 0.0
     np.random.seed(1)
-    u_data = u_exact + noise_level * np.random.randn(len(u_exact))
+    u_data = u_exact.copy()
 
     # ------------------------------------------------------------
     # 4. VALIDATION DES GRADIENTS
@@ -988,7 +158,7 @@ def test_inverse_source_localization():
         epsilon=epsilon_test,
         u_data=u_data,
         source_intensity=source_intensity,
-        alpha_fd=None
+        alpha_fd=1e-7
     )
 
     print("\nRésumé gradients :")
@@ -1055,6 +225,10 @@ def test_inverse_source_localization():
     return solver, graph, results
 
 
+# ============================================================
+# VALIDATION MMS
+# ============================================================
+
 def plot_solution_all_edges(graph, u_num):
     for edge in graph.edges:
         edge_id = edge['id']
@@ -1080,11 +254,12 @@ def plot_solution_all_edges(graph, u_num):
 
         plt.xlabel("x")
         plt.ylabel("u(x)")
-        plt.title(f"Comparaison sur l’arête {edge_id}")
+        plt.title(f"Comparaison sur l'arête {edge_id}")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.show()
+
 
 def exact_solution_mms(x, edge):
     L = edge['length']
@@ -1103,7 +278,8 @@ def exact_solution_mms(x, edge):
     B = 1.0  # amplitude du terme degré 4 (tu peux changer)
 
     return C * (1.0 - x / L) + A * x * (L - x) + B * (x**2) * ((L - x)**2)
-    
+
+
 def compute_errors_mms(graph, u_num):
     """
     Calcule les erreurs L1, L2, Linf sur tout le graphe métrique
@@ -1131,6 +307,7 @@ def compute_errors_mms(graph, u_num):
             Linf = max(Linf, diff)
 
     return L1, np.sqrt(L2), Linf
+
 
 def validation_DF():
 
@@ -1215,5 +392,845 @@ def validation_DF():
     plot_solution_all_edges(graph, u_num)
 
 
+# ============================================================
+# TEST INVERSE - DEUX SOURCES (VERSION GRAPHE EN Y)
+# ============================================================
+
+# def test_inverse_source_localization_two_sources():
+#     """
+#     Test d'optimisation inverse pour localiser DEUX sources sur graphe en Y.
+#     Version avec graphe couplé mais avec paramètres optimisés pour convergence.
+#     """
+#     print("\n" + "=" * 80)
+#     print("TEST PROBLÈME INVERSE – LOCALISATION DE DEUX SOURCES (ε)")
+#     print("=" * 80)
+
+#     # ------------------------------------------------------------
+#     # 1. Création du graphe EN Y (graphe couplé)
+#     # ------------------------------------------------------------
+#     graph = create_simple_2d_graph()
+#     graph.plot_graph(title="Graphe en Y – test inverse (2 sources)")
+
+#     solver = SourceLocalization(graph)
+
+#     # ------------------------------------------------------------
+#     # 2. Vraies sources (2 sources)
+#     # ------------------------------------------------------------
+#     edge_ids = [0, 1]
+#     epsilon_true = {
+#         0: 0.4,   # proche de v2 sur arête 0
+#         1: 0.7,  # proche de v1 sur arête 1
+#     }
+
+#     source_intensity = 1.0
+
+#     print("\n>>> Localisation exacte des sources")
+#     for e, eps in epsilon_true.items():
+#         print(f"  - Arête {e} : ε = {eps}")
+
+#     # ------------------------------------------------------------
+#     # 3. Génération des données observées
+#     # ------------------------------------------------------------
+#     print("\n>>> Génération des données observées")
+
+#     u_exact = solver.solve_direct(epsilon_true, source_intensity)
+
+#     # Commencer sans bruit pour validation
+#     noise_level = 0.0
+#     np.random.seed(42)
+#     u_data = u_exact.copy()
+    
+#     if noise_level > 0:
+#         u_data = u_exact + noise_level * np.random.randn(len(u_exact))
+#         print(f"Bruit ajouté : {noise_level * 100}%")
+#     else:
+#         print("Aucun bruit ajouté (validation parfaite)")
+
+#     # ------------------------------------------------------------
+#     # 4. VALIDATION DES GRADIENTS (AVANT OPTIMISATION)
+#     # ------------------------------------------------------------
+#     print("\n" + "=" * 80)
+#     print("VALIDATION DES GRADIENTS dJ/dε – AVANT OPTIMISATION")
+#     print("=" * 80)
+
+#     epsilon_test = {
+#         0: 0.4,
+#         1: 0.7,
+#     }
+
+#     for edge_id, eps in epsilon_test.items():
+#         print(f"\n--- Arête {edge_id} | ε = {eps} ---")
+
+#         results = solver.validate_gradient_three_methods_epsilon(
+#             edge_id=edge_id,
+#             epsilon=eps,
+#             u_data=u_data,
+#             source_intensity=source_intensity,
+#             alpha_fd=1e-7
+#         )
+
+#         print(f"  dJ/dε (DF)   = {results['grad_fd']:.12e}")
+#         print(f"  dJ/dε (Sens) = {results['grad_sensitivity']:.12e}")
+#         print(f"  dJ/dε (Adj)  = {results['grad_adjoint']:.12e}")
+        
+#         # Erreur relative Sens vs Adj
+#         if abs(results['grad_sensitivity']) > 1e-15:
+#             err_rel = abs(results['grad_adjoint'] - results['grad_sensitivity']) / abs(results['grad_sensitivity'])
+#             print(f"  Erreur Sens/Adj : {err_rel:.3e}")
+
+#     solver.solve_direct(epsilon_test, source_intensity)
+#     J_init = solver.compute_cost_functional(u_data)
+#     print(f"\nValeur initiale du coût J = {J_init:.6e}")
+
+#     # # # ------------------------------------------------------------
+#     # # # 5. OPTIMISATION PAR GRADIENT CONJUGUÉ (ADJOINT)
+#     # # # ------------------------------------------------------------
+#     # # print("\n" + "=" * 80)
+#     # # print("OPTIMISATION PAR GRADIENT CONJUGUÉ (ADJOINT)")
+#     # # print("=" * 80)
+
+#     # epsilon_current = dict(epsilon_test)
+
+#     # # Optimisation alternée
+#     # n_outer = 6
+#     # for k in range(n_outer):
+#     #     print(f"\n>>> Itération externe {k+1}/{n_outer}")
+
+#     #     for edge_id in edge_ids:
+#     #         print(f"\n--- Optimisation de ε sur l'arête {edge_id} ---")
+
+#     #         eps_new = solver.conjugate_gradient_epsilon(
+#     #             edge_id=edge_id,
+#     #             u_data=u_data,
+#     #             epsilon_init=epsilon_current[edge_id],
+#     #             source_intensity=source_intensity,
+#     #             max_iter=40,
+#     #             tol=1e-10,
+#     #             verbose=(k == 0)  # Verbose seulement 1ère itération
+#     #         )
+
+#     #         epsilon_current[edge_id] = eps_new
+
+#     # # # ------------------------------------------------------------
+#     # # # 6. VALIDATION DES GRADIENTS (APRÈS OPTIMISATION)
+#     # # # ------------------------------------------------------------
+#     # # print("\n" + "=" * 80)
+#     # # print("VALIDATION DES GRADIENTS dJ/dε – APRÈS OPTIMISATION")
+#     # # print("=" * 80)
+
+#     # for edge_id, eps in epsilon_current.items():
+#     #     print(f"\n--- Arête {edge_id} | ε = {eps:.8f} ---")
+
+#     #     results = solver.validate_gradient_three_methods_epsilon(
+#     #         edge_id=edge_id,
+#     #         epsilon=eps,
+#     #         u_data=u_data,
+#     #         source_intensity=source_intensity,
+#     #         alpha_fd=1e-7
+#     #     )
+
+#     #     print(f"  dJ/dε (DF)   = {results['grad_fd']:.12e}")
+#     #     print(f"  dJ/dε (Sens) = {results['grad_sensitivity']:.12e}")
+#     #     print(f"  dJ/dε (Adj)  = {results['grad_adjoint']:.12e}")
+        
+#     #     if abs(results['grad_sensitivity']) > 1e-15:
+#     #         err_rel = abs(results['grad_adjoint'] - results['grad_sensitivity']) / abs(results['grad_sensitivity'])
+#     #         print(f"  Erreur Sens/Adj : {err_rel:.3e}")
+
+#     # # solver.solve_direct(epsilon_current, source_intensity)
+#     # # J_opt = solver.compute_cost_functional(u_data)
+
+#     # # ------------------------------------------------------------
+#     # # 7. RÉSULTATS FINAUX
+#     # # ------------------------------------------------------------
+#     # print("\n" + "=" * 80)
+#     # print("RÉSULTATS FINAUX")
+#     # print("=" * 80)
+
+#     # for e in epsilon_true.keys():
+#     #     err_abs = abs(epsilon_current[e] - epsilon_true[e])
+#     #     err_rel = err_abs / abs(epsilon_true[e])
+#     #     print(
+#     #         f"Arête {e} : ε_exact = {epsilon_true[e]:.8f} | "
+#     #         f"ε_identifié = {epsilon_current[e]:.8f} | "
+#     #         f"erreur abs = {err_abs:.3e} | "
+#     #         f"erreur rel = {err_rel:.3e}"
+#     #     )
+
+#     # print(f"\nJ initial = {J_init:.10e}")
+#     # print(f"J final   = {J_opt:.10e}")
+#     # print(f"Réduction : {(J_init - J_opt) / J_init * 100:.2f}%")
+
+#     # # ------------------------------------------------------------
+#     # # 8. VISUALISATIONS COMPLÈTES
+#     # # ------------------------------------------------------------
+#     # print("\n>>> Visualisations finales")
+
+#     # solver.solve_direct(epsilon_current, source_intensity)
+#     # solver.solve_sensitivity_epsilon(epsilon_current, source_intensity)
+#     # solver.solve_adjoint(epsilon_current, u_data, source_intensity)
+
+#     # solver.plot_all_results(epsilon_current, u_data)
+
+#     # return solver, graph, {
+#     #     "epsilon_true": epsilon_true,
+#     #     "epsilon_init": epsilon_test,
+#     #     "epsilon_opt": epsilon_current,
+#     #     "J_init": J_init,
+#     #     "J_opt": J_opt,
+#     # }
+def create_star_graph_three_sources():
+    """
+    Graphe en étoile à 3 branches
+    → idéal pour tester 3 sources indépendantes
+    """
+    graph = MetricGraph()
+
+    # -----------------------------
+    # Sommets
+    # -----------------------------
+    positions = {
+        "v0": (0.0, 0.0),   # centre
+        "v1": (1.0, 0.0),   # branche 1
+        "v2": (-0.5, 0.8),  # branche 2
+        "v3": (-0.5, -0.8)  # branche 3
+    }
+
+    for v, (x, y) in positions.items():
+        graph.set_vertex_position(v, x, y)
+
+    # -----------------------------
+    # Arêtes (3 branches)
+    # -----------------------------
+    graph.add_edge(
+        0, "v0", "v1",
+        length=1.0,
+        a_coef=1.0,
+        n_points=200
+    )
+
+    graph.add_edge(
+        1, "v0", "v2",
+        length=1.0,
+        a_coef=1.0,
+        n_points=200
+    )
+
+    graph.add_edge(
+        2, "v0", "v3",
+        length=1.0,
+        a_coef=1.0,
+        n_points=200
+    )
+
+    # -----------------------------
+    # Conditions de Dirichlet
+    # -----------------------------
+    graph.set_boundary_vertices(["v1", "v2", "v3"])
+
+    # INDISPENSABLE
+    graph.build_dof_map()
+
+    return graph
 
 
+# ============================================================
+# MAIN
+# ============================================================
+
+
+def test_inverse_one_source_vectorial():
+    """
+    CAS TEST COMPLET – LOCALISATION D'UNE SOURCE
+    ✔ même structure que les cas 2 et 3 sources
+    ✔ optimisation vectorielle (dimension 1)
+    ✔ PG vs CG
+    """
+
+    print("\n" + "=" * 80)
+    print("CAS TEST COMPLET – LOCALISATION D’UNE SOURCE (ε vectoriel)")
+    print("=" * 80)
+
+    # ============================================================
+    # 1. GRAPHE
+    # ============================================================
+    graph = create_simple_Y_graph()
+    graph.plot_graph(title="Graphe en Y – problème inverse (1 source)")
+
+    solver = SourceLocalization(graph)
+
+    print(f"Nombre total de DDL: {graph.n_dof}")
+
+    # ============================================================
+    # 2. SOURCE EXACTE
+    # ============================================================
+    edge_ids = [0]                      # UNE seule arête
+    source_intensity = 1.0
+
+    # position relative sur l’arête (0 < ε̂ < 1)
+    epsilon_hat_true = np.array([0.6])
+
+    # conversion en position physique
+    epsilon_true = np.array([
+        epsilon_hat_true[0] * graph.edges[edge_ids[0]]["length"]
+    ])
+
+    print("\n>>> Source exacte")
+    print(f"  - Arête {edge_ids[0]}")
+    print(f"  - ε̂ = {epsilon_hat_true[0]:.3f}")
+    print(f"  - ε  = {epsilon_true[0]:.6f}")
+
+    epsilon_true_dict = {
+        edge_ids[0]: epsilon_true[0]
+    }
+
+    # ============================================================
+    # 3. DONNÉES OBSERVÉES
+    # ============================================================
+    print("\n>>> Génération des données observées (problème direct)")
+
+    u_exact = solver.solve_direct(epsilon_true_dict, source_intensity)
+
+    noise_level = 0.0
+    np.random.seed(0)
+    u_data = u_exact.copy()
+
+    if noise_level > 0:
+        u_data += noise_level * np.random.randn(len(u_data))
+        print(f"Bruit ajouté : {noise_level*100:.1f}%")
+    else:
+        print("Aucun bruit (cas de validation)")
+
+    # ============================================================
+    # 4. VALIDATION DES GRADIENTS
+    # ============================================================
+    print("\n" + "=" * 80)
+    print("VALIDATION DES GRADIENTS dJ/dε")
+    print("=" * 80)
+
+    results = solver.validate_gradient_three_methods_epsilon(
+        edge_id=edge_ids[0],
+        epsilon=epsilon_true[0],
+        u_data=u_data,
+        source_intensity=source_intensity,
+        alpha_fd=1e-7,
+    )
+
+    print("\nGradients :")
+    print(f"  dJ/dε (DF)   = {results['grad_fd']:.6e}")
+    print(f"  dJ/dε (Sens) = {results['grad_sensitivity']:.6e}")
+    print(f"  dJ/dε (Adj)  = {results['grad_adjoint']:.6e}")
+
+    solver.solve_direct(epsilon_true_dict, source_intensity)
+    J_ref = solver.compute_cost_functional(u_data)
+    print(f"\nValeur du coût J (référence) = {J_ref:.3e}")
+
+    # ============================================================
+    # 5. OPTIMISATION VECTORIELLE
+    # ============================================================
+    epsilon_init = np.array([
+        0.2 * graph.edges[edge_ids[0]]["length"]
+    ])
+
+    # ------------------------------------------------------------
+    # 5.1 Gradient projeté vectoriel
+    # ------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("OPTIMISATION – GRADIENT PROJETÉ VECTORIEL")
+    print("=" * 80)
+
+    eps_pg = solver.projected_gradient_epsilon_vector(
+        epsilon_init=epsilon_init,
+        edge_ids=edge_ids,
+        u_data=u_data,
+        source_intensity=source_intensity,
+        step=0.2 * graph.edges[edge_ids[0]]["length"],
+        max_iter=150,
+        tol=1e-8,
+    )
+
+    print("\nRésultat PG :")
+    print(f"  ε = {eps_pg[0]:.6f}")
+
+    solver.solve_direct(
+        {edge_ids[0]: eps_pg[0]},
+        source_intensity,
+    )
+    J_pg = solver.compute_cost_functional(u_data)
+
+    # ------------------------------------------------------------
+    # 5.2 Gradient conjugué vectoriel
+    # ------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("OPTIMISATION – GRADIENT CONJUGUÉ VECTORIEL")
+    print("=" * 80)
+
+    eps_cg = solver.conjugate_gradient_epsilon_vector(
+        epsilon_init=epsilon_init,
+        edge_ids=edge_ids,
+        u_data=u_data,
+        source_intensity=source_intensity,
+        max_iter=80,
+        tol=1e-8,
+    )
+
+    print("\nRésultat CG :")
+    print(f"  ε = {eps_cg[0]:.6f}")
+
+    solver.solve_direct(
+        {edge_ids[0]: eps_cg[0]},
+        source_intensity,
+    )
+    J_cg = solver.compute_cost_functional(u_data)
+
+    # ============================================================
+    # 6. COMPARAISON FINALE
+    # ============================================================
+    print("\n" + "=" * 80)
+    print("COMPARAISON DES MÉTHODES")
+    print("=" * 80)
+
+    print(
+        f"Arête {edge_ids[0]} | "
+        f"ε exact = {epsilon_true[0]:.6f} | "
+        f"ε PG = {eps_pg[0]:.6f} | "
+        f"ε CG = {eps_cg[0]:.6f}"
+    )
+
+    print("\nValeurs du coût :")
+    print(f"  J référence = {J_ref:.3e}")
+    print(f"  J PG        = {J_pg:.3e}")
+    print(f"  J CG        = {J_cg:.3e}")
+
+    # ============================================================
+    # 7. VISUALISATIONS FINALES (CG)
+    # ============================================================
+    print("\n>>> Visualisations finales (solution CG)")
+
+    eps_dict_cg = {edge_ids[0]: eps_cg[0]}
+
+    solver.solve_direct(eps_dict_cg, source_intensity)
+    solver.solve_adjoint(eps_dict_cg, u_data, source_intensity)
+    solver.solve_sensitivity_epsilon(eps_dict_cg, source_intensity)
+
+    solver.plot_all_results(eps_dict_cg, u_data)
+
+    return {
+        "epsilon_true": epsilon_true,
+        "epsilon_init": epsilon_init,
+        "epsilon_pg": eps_pg,
+        "epsilon_cg": eps_cg,
+        "J_ref": J_ref,
+        "J_pg": J_pg,
+        "J_cg": J_cg,
+    }
+
+
+def test_inverse_source_localization_two_sources_complete():
+    """
+    CAS TEST COMPLET – LOCALISATION DE DEUX SOURCES
+    ✔ optimisation conjointe vectorielle
+    ✔ gradient adjoint validé
+    ✔ PG vectoriel vs CG vectoriel
+    """
+
+    print("\n" + "=" * 80)
+    print("CAS TEST COMPLET – LOCALISATION DE DEUX SOURCES (ε vectoriel)")
+    print("=" * 80)
+
+    # ============================================================
+    # 1. GRAPHE
+    # ============================================================
+    graph = create_simple_2d_graph()
+    graph.plot_graph(title="Graphe en Y – problème inverse (2 sources)")
+
+    solver = SourceLocalization(graph)
+
+    print(f"Nombre total de DDL: {graph.n_dof}")
+
+    # ============================================================
+    # 2. SOURCES EXACTES
+    # ============================================================
+    edge_ids = [0, 1]
+    epsilon_true = np.array([0.4, 0.7])
+    source_intensity = 1.0
+
+    print("\n>>> Sources exactes")
+    for i, eid in enumerate(edge_ids):
+        print(f"  - Arête {eid} : ε = {epsilon_true[i]}")
+
+    epsilon_true_dict = {
+        edge_ids[i]: epsilon_true[i] for i in range(len(edge_ids))
+    }
+
+    # ============================================================
+    # 3. DONNÉES OBSERVÉES
+    # ============================================================
+    print("\n>>> Génération des données observées (problème direct)")
+    u_exact = solver.solve_direct(epsilon_true_dict, source_intensity)
+
+    noise_level = 0.0
+    np.random.seed(0)
+    u_data = u_exact.copy()
+
+    if noise_level > 0:
+        u_data += noise_level * np.random.randn(len(u_data))
+        print(f"Bruit ajouté : {noise_level*100:.1f}%")
+    else:
+        print("Aucun bruit (cas de validation)")
+
+    # ============================================================
+    # 4. VALIDATION DES GRADIENTS (PAR ARÊTE)
+    # ============================================================
+    print("\n" + "=" * 80)
+    print("VALIDATION DES GRADIENTS dJ/dε (par arête)")
+    print("=" * 80)
+
+    for i, eid in enumerate(edge_ids):
+        print(f"\n--- Arête {eid} | ε = {epsilon_true[i]} ---")
+
+        results = solver.validate_gradient_three_methods_epsilon(
+            edge_id=eid,
+            epsilon=epsilon_true[i],
+            u_data=u_data,
+            source_intensity=source_intensity,
+            alpha_fd=1e-7,
+        )
+
+        print(f"  dJ/dε (DF)   = {results['grad_fd']:.6e}")
+        print(f"  dJ/dε (Sens) = {results['grad_sensitivity']:.6e}")
+        print(f"  dJ/dε (Adj)  = {results['grad_adjoint']:.6e}")
+
+    solver.solve_direct(epsilon_true_dict, source_intensity)
+    J_ref = solver.compute_cost_functional(u_data)
+    print(f"\nValeur du coût J (référence) = {J_ref:.3e}")
+
+    # ============================================================
+    # 5. OPTIMISATION VECTORIELLE
+    # ============================================================
+    epsilon_init = np.array([0.2, 0.2])
+
+    print("\n" + "=" * 80)
+    print("OPTIMISATION – GRADIENT PROJETÉ VECTORIEL")
+    print("=" * 80)
+
+    eps_pg = solver.projected_gradient_epsilon_vector(
+        epsilon_init=epsilon_init,
+        edge_ids=edge_ids,
+        u_data=u_data,
+        source_intensity=source_intensity,
+        step=0.2,
+        max_iter=200,
+        tol=1e-8,
+    )
+
+    print("\nRésultat PG vectoriel:")
+    for i, eid in enumerate(edge_ids):
+        print(f"  Arête {eid} : ε = {eps_pg[i]:.6f}")
+
+    solver.solve_direct(
+        {edge_ids[i]: eps_pg[i] for i in range(len(edge_ids))},
+        source_intensity,
+    )
+    J_pg = solver.compute_cost_functional(u_data)
+
+    # ------------------------------------------------------------
+
+    print("\n" + "=" * 80)
+    print("OPTIMISATION – GRADIENT CONJUGUÉ VECTORIEL")
+    print("=" * 80)
+
+    eps_cg = solver.conjugate_gradient_epsilon_vector(
+        epsilon_init=epsilon_init,
+        edge_ids=edge_ids,
+        u_data=u_data,
+        source_intensity=source_intensity,
+        max_iter=100,
+        tol=1e-8,
+    )
+
+    print("\nRésultat CG vectoriel:")
+    for i, eid in enumerate(edge_ids):
+        print(f"  Arête {eid} : ε = {eps_cg[i]:.6f}")
+
+    solver.solve_direct(
+        {edge_ids[i]: eps_cg[i] for i in range(len(edge_ids))},
+        source_intensity,
+    )
+    J_cg = solver.compute_cost_functional(u_data)
+
+    # ============================================================
+    # 6. COMPARAISON FINALE
+    # ============================================================
+    print("\n" + "=" * 80)
+    print("COMPARAISON DES MÉTHODES")
+    print("=" * 80)
+
+    for i, eid in enumerate(edge_ids):
+        print(
+            f"Arête {eid} | "
+            f"ε exact = {epsilon_true[i]:.6f} | "
+            f"ε PG = {eps_pg[i]:.6f} | "
+            f"ε CG = {eps_cg[i]:.6f}"
+        )
+
+    print("\nValeurs du coût :")
+    print(f"  J référence = {J_ref:.3e}")
+    print(f"  J PG        = {J_pg:.3e}")
+    print(f"  J CG        = {J_cg:.3e}")
+
+    # ============================================================
+    # 7. VISUALISATIONS FINALES (CG)
+    # ============================================================
+    print("\n>>> Visualisations finales (solution CG)")
+
+    eps_dict_cg = {edge_ids[i]: eps_cg[i] for i in range(len(edge_ids))}
+
+    solver.solve_direct(eps_dict_cg, source_intensity)
+    solver.solve_adjoint(eps_dict_cg, u_data, source_intensity)
+    solver.solve_sensitivity_epsilon(eps_dict_cg, source_intensity)
+
+    solver.plot_all_results(eps_dict_cg, u_data)
+
+    return {
+        "epsilon_true": epsilon_true,
+        "epsilon_init": epsilon_init,
+        "epsilon_pg": eps_pg,
+        "epsilon_cg": eps_cg,
+        "J_ref": J_ref,
+        "J_pg": J_pg,
+        "J_cg": J_cg,
+    }
+
+def test_inverse_three_sources_vectorial():
+    """
+    CAS TEST COMPLET – LOCALISATION DE TROIS SOURCES
+    ✔ graphe étoile
+    ✔ 1 source par arête (strictement sur l’arête)
+    ✔ optimisation vectorielle conjointe
+    ✔ Gradient projeté vs Gradient conjugué
+    """
+
+    print("\n" + "=" * 80)
+    print("CAS TEST COMPLET – LOCALISATION DE TROIS SOURCES (ε vectoriel)")
+    print("=" * 80)
+
+    # ============================================================
+    # 1. GRAPHE ÉTOILE
+    # ============================================================
+    graph = create_star()
+    graph.plot_graph(title="Graphe étoile – problème inverse (3 sources)")
+
+    solver = SourceLocalization(graph)
+
+    print(f"Nombre total de DDL: {graph.n_dof}")
+
+    # ============================================================
+    # 2. SOURCES EXACTES (UNE PAR ARÊTE)
+    # ============================================================
+    edge_ids = [0, 1, 2]
+    source_intensity = 1.0
+
+    # positions relatives (fractions) le long de CHAQUE arête
+    epsilon_hat = np.array([0.6, 0.5, 0.7])  # ∈ (0,1)
+
+    epsilon_true_dict = {
+        eid: epsilon_hat[i] * graph.edges[eid]["length"]
+        for i, eid in enumerate(edge_ids)
+    }
+
+    print("\n>>> Sources exactes")
+    for i, eid in enumerate(edge_ids):
+        print(
+            f"  - Arête {eid} : "
+            f"ε̂ = {epsilon_hat[i]:.2f}  |  "
+            f"ε = {epsilon_true_dict[eid]:.4f}"
+        )
+
+    # sécurité
+    for eid, eps in epsilon_true_dict.items():
+        L = graph.edges[eid]["length"]
+        assert 0.0 < eps < L, f"Source hors arête {eid}"
+
+    # ============================================================
+    # 3. DONNÉES OBSERVÉES (PROBLÈME DIRECT)
+    # ============================================================
+    print("\n>>> Génération des données observées")
+
+    u_exact = solver.solve_direct(epsilon_true_dict, source_intensity)
+    u_data = u_exact.copy()  # sans bruit (cas de validation)
+
+    # ============================================================
+    # 4. VALIDATION DES GRADIENTS (PAR ARÊTE)
+    # ============================================================
+    print("\n" + "=" * 80)
+    print("VALIDATION DES GRADIENTS dJ/dε (par arête)")
+    print("=" * 80)
+
+    for i, eid in enumerate(edge_ids):
+        eps_test = epsilon_true_dict[eid]
+
+        print(f"\n--- Arête {eid} | ε = {eps_test:.6f} ---")
+
+        results = solver.validate_gradient_three_methods_epsilon(
+            edge_id=eid,
+            epsilon=eps_test,
+            u_data=u_data,
+            source_intensity=source_intensity,
+            alpha_fd=1e-7,
+        )
+
+        print(f"  dJ/dε (DF)   = {results['grad_fd']:.6e}")
+        print(f"  dJ/dε (Sens) = {results['grad_sensitivity']:.6e}")
+        print(f"  dJ/dε (Adj)  = {results['grad_adjoint']:.6e}")
+
+    solver.solve_direct(epsilon_true_dict, source_intensity)
+    J_ref = solver.compute_cost_functional(u_data)
+    print(f"\nValeur du coût J (référence) = {J_ref:.3e}")
+
+    # ============================================================
+    # 5. OPTIMISATION VECTORIELLE
+    # ============================================================
+    epsilon_init = np.array([0.2, 0.2, 0.2])
+
+    # ------------------------------------------------------------
+    # 5.1 Gradient projeté vectoriel
+    # ------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("OPTIMISATION – GRADIENT PROJETÉ VECTORIEL")
+    print("=" * 80)
+
+    eps_pg = solver.projected_gradient_epsilon_vector(
+        epsilon_init=epsilon_init,
+        edge_ids=edge_ids,
+        u_data=u_data,
+        source_intensity=source_intensity,
+        step=0.2,
+        max_iter=300,
+        tol=1e-8,
+    )
+
+    print("\nRésultat PG vectoriel:")
+    for i, eid in enumerate(edge_ids):
+        print(f"  Arête {eid} : ε = {eps_pg[i]:.6f}")
+
+    solver.solve_direct(
+        {edge_ids[i]: eps_pg[i] for i in range(len(edge_ids))},
+        source_intensity,
+    )
+    J_pg = solver.compute_cost_functional(u_data)
+
+    # ------------------------------------------------------------
+    # 5.2 Gradient conjugué vectoriel
+    # ------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("OPTIMISATION – GRADIENT CONJUGUÉ VECTORIEL")
+    print("=" * 80)
+
+    eps_cg = solver.conjugate_gradient_epsilon_vector(
+        epsilon_init=epsilon_init,
+        edge_ids=edge_ids,
+        u_data=u_data,
+        source_intensity=source_intensity,
+        max_iter=150,
+        tol=1e-8,
+    )
+
+    print("\nRésultat CG vectoriel:")
+    for i, eid in enumerate(edge_ids):
+        print(f"  Arête {eid} : ε = {eps_cg[i]:.6f}")
+
+    solver.solve_direct(
+        {edge_ids[i]: eps_cg[i] for i in range(len(edge_ids))},
+        source_intensity,
+    )
+    J_cg = solver.compute_cost_functional(u_data)
+
+    # ============================================================
+    # 6. COMPARAISON FINALE
+    # ============================================================
+    print("\n" + "=" * 80)
+    print("COMPARAISON DES MÉTHODES")
+    print("=" * 80)
+
+    for i, eid in enumerate(edge_ids):
+        print(
+            f"Arête {eid} | "
+            f"ε exact = {epsilon_true_dict[eid]:.6f} | "
+            f"ε PG = {eps_pg[i]:.6f} | "
+            f"ε CG = {eps_cg[i]:.6f}"
+        )
+
+    print("\nValeurs du coût :")
+    print(f"  J référence = {J_ref:.3e}")
+    print(f"  J PG        = {J_pg:.3e}")
+    print(f"  J CG        = {J_cg:.3e}")
+
+    # ============================================================
+    # 7. VISUALISATIONS FINALES (CG)
+    # ============================================================
+    print("\n>>> Visualisations finales (solution CG)")
+
+    eps_dict_cg = {edge_ids[i]: eps_cg[i] for i in range(len(edge_ids))}
+
+    solver.solve_direct(eps_dict_cg, source_intensity)
+    solver.solve_adjoint(eps_dict_cg, u_data, source_intensity)
+    solver.solve_sensitivity_epsilon(eps_dict_cg, source_intensity)
+
+    solver.plot_all_results(eps_dict_cg, u_data)
+
+    return {
+        "epsilon_true": epsilon_true_dict,
+        "epsilon_init": epsilon_init,
+        "epsilon_pg": eps_pg,
+        "epsilon_cg": eps_cg,
+        "J_ref": J_ref,
+        "J_pg": J_pg,
+        "J_cg": J_cg,
+    }
+
+
+
+def create_star():
+    graph = MetricGraph()
+
+    positions = {
+        "v0": (0.0, 0.0),
+        "v1": (1.0, 0.0),
+        "v2": (-0.5, 0.8),
+        "v3": (-0.5, -0.8),
+    }
+
+    for v, (x, y) in positions.items():
+        graph.set_vertex_position(v, x, y)
+
+    def edge_length(vA, vB):
+        xA, yA = positions[vA]
+        xB, yB = positions[vB]
+        return np.sqrt((xB - xA)**2 + (yB - yA)**2)
+
+    graph.add_edge(
+        0, "v0", "v1",
+        length=edge_length("v0", "v1"),
+        a_coef=1.0,
+        n_points=200
+    )
+
+    graph.add_edge(
+        1, "v0", "v2",
+        length=edge_length("v0", "v2"),
+        a_coef=1.0,
+        n_points=200
+    )
+
+    graph.add_edge(
+        2, "v0", "v3",
+        length=edge_length("v0", "v3"),
+        a_coef=1.0,
+        n_points=200
+    )
+
+    graph.set_boundary_vertices(["v1", "v2", "v3"])
+    graph.build_dof_map()
+
+    return graph
