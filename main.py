@@ -13,6 +13,10 @@ if __name__ == "__main__":
         test_inverse_one_source_vectorial()
     elif choix ==3 :
         test_inverse_source_localization_two_sources_complete()
-    else :
+    elif choix==4:
         test_inverse_three_sources_vectorial()
+    elif choix ==5 :
+        test_inverse_complex_five_sources()
+    else :
+        test_inverse_extreme_ten_sources()
     
