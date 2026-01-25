@@ -3202,3 +3202,768 @@ def plot_source_comparison(graph, edge_ids, epsilon_true_dict, epsilon_identifie
     print(f"  Écart-type     : {np.std(errors):.4f}")
     print(f"  Nb erreurs > 5%: {sum(1 for e in errors if e > 0.05)}/{len(errors)}")
     print(f"  Nb erreurs > 2%: {sum(1 for e in errors if e > 0.02)}/{len(errors)}")
+    
+
+
+    
+def create_realistic_pipeline_network():
+        """
+        Graphe réseau complexe type pipeline / réseau industriel
+        - cycles multiples
+        - bifurcations
+        - branches longues
+        - sources multiples réparties
+        """
+        graph = MetricGraph()
+
+        # Positions des sommets
+        positions = {
+            # noyau central
+            "v0": (0.0, 0.0),
+            "v1": (1.0, 0.2),
+            "v2": (0.6, 1.0),
+            "v3": (-0.6, 1.0),
+            "v4": (-1.0, 0.0),
+            "v5": (-0.6, -1.0),
+            "v6": (0.6, -1.0),
+
+            # cycle secondaire
+            "v7": (2.0, 0.8),
+            "v8": (2.5, -0.2),
+            "v9": (1.8, -1.2),
+
+            # pipeline long
+            "p1": (3.5, -0.2),
+            "p2": (4.8, -0.2),
+            "p3": (6.2, -0.2),
+
+            # sorties
+            "b1": (0.6, 2.0),
+            "b2": (-0.6, 2.0),
+            "b3": (-2.0, 0.0),
+            "b4": (-0.6, -2.0),
+            "b5": (6.9, -0.2),
+        }
+
+        for v, (x, y) in positions.items():
+            graph.set_vertex_position(v, x, y)
+
+        def edge_length(vA, vB):
+            xA, yA = positions[vA]
+            xB, yB = positions[vB]
+            return np.sqrt((xB - xA)**2 + (yB - yA)**2)
+
+        eid = 0
+
+        # Cycle central principal
+        central_cycle = ["v1", "v2", "v3", "v4", "v5", "v6", "v1"]
+        for i in range(len(central_cycle) - 1):
+            graph.add_edge(
+                eid, central_cycle[i], central_cycle[i + 1],
+                length=edge_length(central_cycle[i], central_cycle[i + 1]),
+                a_coef=1.0,
+                n_points=120
+            )
+            eid += 1
+
+        # Connexions au centre
+        for v in ["v1", "v3", "v5"]:
+            graph.add_edge(
+                eid, "v0", v,
+                length=edge_length("v0", v),
+                a_coef=1.0,
+                n_points=120
+            )
+            eid += 1
+
+        # Cycle secondaire
+        secondary_cycle = ["v1", "v7", "v8", "v9", "v6"]
+        for i in range(len(secondary_cycle) - 1):
+            graph.add_edge(
+                eid, secondary_cycle[i], secondary_cycle[i + 1],
+                length=edge_length(secondary_cycle[i], secondary_cycle[i + 1]),
+                a_coef=0.8,
+                n_points=120
+            )
+            eid += 1
+
+        # Pipeline long
+        pipeline = ["v8", "p1", "p2", "p3"]
+        for i in range(len(pipeline) - 1):
+            graph.add_edge(
+                eid, pipeline[i], pipeline[i + 1],
+                length=edge_length(pipeline[i], pipeline[i + 1]),
+                a_coef=0.6,
+                n_points=120
+            )
+            eid += 1
+
+        # Branches vers sorties
+        exits = [
+            ("v2", "b1"),
+            ("v3", "b2"),
+            ("v4", "b3"),
+            ("v5", "b4"),
+            ("p3", "b5"),
+        ]
+
+        for v_int, v_bord in exits:
+            graph.add_edge(
+                eid, v_int, v_bord,
+                length=edge_length(v_int, v_bord),
+                a_coef=1.0,
+                n_points=120
+            )
+            eid += 1
+
+        graph.set_boundary_vertices(["b1", "b2", "b3", "b4", "b5"])
+        graph.build_dof_map()
+
+        return graph
+
+    
+
+def test_inverse_realistic_pipeline_vectorial():
+            """
+            CAS TEST COMPLET – LOCALISATION DE SOURCES SUR RÉSEAU RÉALISTE
+            ✔ graphe pipeline complexe
+            ✔ sources multiples sur arêtes internes longues et cycliques
+            ✔ optimisation vectorielle conjointe
+            ✔ Gradient projeté vs Gradient conjugué vs UZAWA
+            """
+
+            print("\n" + "=" * 90)
+            print("CAS TEST COMPLET – PROBLÈME INVERSE SUR RÉSEAU PIPELINE (ε vectoriel)")
+            print("=" * 90)
+
+            # ============================================================
+            # 1. GRAPHE RÉALISTE
+            # ============================================================
+            epsilon_true_dict_ref = {
+                2: 0.35,    # anneau interne
+                5: 0.72,    # anneau interne opposé
+                11: 0.48,   # connexion interne-externe
+                16: 0.61,   # anneau externe
+                22: 0.83,   # pipeline droit long
+                25: 0.44,   # pipeline gauche
+            }
+
+            source_intensity = 1.0
+
+            graph = create_very_complex_pipeline_network()
+            graph.plot_graph(title="Réseau pipeline réaliste – problème inverse")
+
+            solver = SourceLocalization(graph)
+
+            print(f"\nNombre total de DDL: {graph.n_dof}")
+
+            # ============================================================
+            # 2. SOURCES EXACTES (VÉRITÉ TERRAIN)
+            # ============================================================
+            edge_ids = list(epsilon_true_dict_ref.keys())
+
+            epsilon_hat_true = np.array([
+                epsilon_true_dict_ref[eid] / graph.edges[eid]["length"]
+                for eid in edge_ids
+            ])
+
+            epsilon_true_dict = {
+                eid: epsilon_hat_true[i] * graph.edges[eid]["length"]
+                for i, eid in enumerate(edge_ids)
+            }
+
+            print("\n>>> Sources exactes (vérité terrain)")
+            for i, eid in enumerate(edge_ids):
+                L = graph.edges[eid]["length"]
+                print(
+                    f"  - Arête {eid:2d} | "
+                    f"ε̂ = {epsilon_hat_true[i]:.3f} | "
+                    f"ε = {epsilon_true_dict[eid]:.5f} / L = {L:.2f}"
+                )
+
+            # Sécurité
+            for eid, eps in epsilon_true_dict.items():
+                L = graph.edges[eid]["length"]
+                assert 0.0 < eps < L, f"Source hors arête {eid}"
+
+            # ============================================================
+            # 3. DONNÉES OBSERVÉES (PROBLÈME DIRECT)
+            # ============================================================
+            print("\n>>> Génération des données observées (problème direct)")
+
+            u_exact = solver.solve_direct(epsilon_true_dict, source_intensity)
+            u_data = u_exact.copy()
+
+            # ============================================================
+            # 4. VALIDATION DES GRADIENTS (ÉCHANTILLON)
+            # ============================================================
+            print("\n" + "=" * 90)
+            print("VALIDATION DES GRADIENTS dJ/dε (échantillon sur 2 arêtes)")
+            print("=" * 90)
+
+            for eid in [edge_ids[0], edge_ids[-1]]:
+                i = edge_ids.index(eid)
+                eps_test = epsilon_true_dict[eid]
+
+                print(f"\n--- Arête {eid} | ε = {eps_test:.6f} ---")
+
+                results = solver.validate_gradient_three_methods_epsilon(
+                    edge_id=eid,
+                    epsilon=eps_test,
+                    u_data=u_data,
+                    source_intensity=source_intensity,
+                    alpha_fd=1e-7,
+                )
+
+                print(f"  dJ/dε (DF)   = {results['grad_fd']:.6e}")
+                print(f"  dJ/dε (Sens) = {results['grad_sensitivity']:.6e}")
+                print(f"  dJ/dε (Adj)  = {results['grad_adjoint']:.6e}")
+
+            solver.solve_direct(epsilon_true_dict, source_intensity)
+            J_ref = solver.compute_cost_functional(u_data)
+            print(f"\nValeur du coût J (référence) = {J_ref:.3e}")
+
+            # ============================================================
+            # 5. OPTIMISATION VECTORIELLE
+            # ============================================================
+            n_src = len(edge_ids)
+            epsilon_init = np.array([
+                0.5 * graph.edges[eid]["length"] for eid in edge_ids
+            ])
+
+            # ------------------------------------------------------------
+            # 5.1 Gradient projeté vectoriel
+            # ------------------------------------------------------------
+            print("\n" + "=" * 90)
+            print("OPTIMISATION – GRADIENT PROJETÉ VECTORIEL")
+            print("=" * 90)
+
+            eps_pg = solver.projected_gradient_epsilon_vector(
+                epsilon_init=epsilon_init,
+                edge_ids=edge_ids,
+                u_data=u_data,
+                source_intensity=source_intensity,
+                step=0.15,
+                max_iter=400,
+                tol=1e-9,
+            )
+
+            print("\nRésultat PG vectoriel:")
+            for i, eid in enumerate(edge_ids):
+                print(f"  Arête {eid} : ε = {eps_pg[i]:.6f}")
+
+            solver.solve_direct(
+                {edge_ids[i]: eps_pg[i] for i in range(n_src)},
+                source_intensity,
+            )
+            J_pg = solver.compute_cost_functional(u_data)
+
+            # ------------------------------------------------------------
+            # 5.2 Gradient conjugué vectoriel
+            # ------------------------------------------------------------
+            print("\n" + "=" * 90)
+            print("OPTIMISATION – GRADIENT CONJUGUÉ VECTORIEL")
+            print("=" * 90)
+
+            eps_cg = solver.conjugate_gradient_epsilon_vector(
+                epsilon_init=epsilon_init,
+                edge_ids=edge_ids,
+                u_data=u_data,
+                source_intensity=source_intensity,
+                max_iter=200,
+                tol=1e-9,
+            )
+
+            print("\nRésultat CG vectoriel:")
+            for i, eid in enumerate(edge_ids):
+                print(f"  Arête {eid} : ε = {eps_cg[i]:.6f}")
+
+            solver.solve_direct(
+                {edge_ids[i]: eps_cg[i] for i in range(n_src)},
+                source_intensity,
+            )
+            J_cg = solver.compute_cost_functional(u_data)
+
+            # ------------------------------------------------------------
+            # 5.3 UZAWA avec différentes contraintes
+            # ------------------------------------------------------------
+            print("\n" + "=" * 90)
+            print("OPTIMISATION – UZAWA (plusieurs contraintes)")
+            print("=" * 90)
+
+            # Contrainte lâche
+            print("\n>>> Uzawa avec K_max = 6.0 (lâche)")
+            eps_uzawa_6, lam_uzawa_6 = solver.uzawa_epsilon_vector(
+                epsilon_init=epsilon_init,
+                edge_ids=edge_ids,
+                u_data=u_data,
+                source_intensity=source_intensity,
+                K_max=6.0,
+                step_init=0.4,
+                rho=1.0,
+                max_iter=600,
+                tol=1e-10,
+                verbose=False,
+            )
+
+            solver.solve_direct(
+                {edge_ids[i]: eps_uzawa_6[i] for i in range(n_src)},
+                source_intensity,
+            )
+            J_uzawa_6 = solver.compute_cost_functional(u_data)
+            print(f"K_max=6.0 : λ={lam_uzawa_6:.3e}, J={J_uzawa_6:.3e}")
+
+            # Contrainte modérée
+            print("\n>>> Uzawa avec K_max = 4.0 (modéré)")
+            eps_uzawa_4, lam_uzawa_4 = solver.uzawa_epsilon_vector(
+                epsilon_init=epsilon_init,
+                edge_ids=edge_ids,
+                u_data=u_data,
+                source_intensity=source_intensity,
+                K_max=4.0,
+                step_init=0.35,
+                rho=1.5,
+                max_iter=600,
+                tol=1e-10,
+                verbose=True,
+            )
+
+            solver.solve_direct(
+                {edge_ids[i]: eps_uzawa_4[i] for i in range(n_src)},
+                source_intensity,
+            )
+            J_uzawa_4 = solver.compute_cost_functional(u_data)
+
+            # Contrainte stricte
+            print("\n>>> Uzawa avec K_max = 2.5 (strict)")
+            eps_uzawa_25, lam_uzawa_25 = solver.uzawa_epsilon_vector(
+                epsilon_init=epsilon_init,
+                edge_ids=edge_ids,
+                u_data=u_data,
+                source_intensity=source_intensity,
+                K_max=2.5,
+                step_init=0.3,
+                rho=2.0,
+                max_iter=600,
+                tol=1e-10,
+                verbose=False,
+            )
+
+            solver.solve_direct(
+                {edge_ids[i]: eps_uzawa_25[i] for i in range(n_src)},
+                source_intensity,
+            )
+            J_uzawa_25 = solver.compute_cost_functional(u_data)
+            print(f"K_max=2.5 : λ={lam_uzawa_25:.3e}, J={J_uzawa_25:.3e}")
+
+            # ============================================================
+            # 6. COMPARAISON FINALE
+            # ============================================================
+            print("\n" + "=" * 90)
+            print("COMPARAISON DES MÉTHODES")
+            print("=" * 90)
+
+            epsilon_true_vec = np.array([epsilon_true_dict[eid] for eid in edge_ids])
+            L_vec = np.array([graph.edges[eid]["length"] for eid in edge_ids])
+
+            print("\nSOLUTION EXACTE :")
+            for i, eid in enumerate(edge_ids):
+                print(f"  Arête {eid} : ε = {epsilon_true_vec[i]:.6f}")
+            print(f"  Sparsité L1 : {sum(epsilon_true_vec / L_vec):.4f}")
+
+            print("\nRÉSULTATS :")
+            print(f"{'Méthode':<20} ", end="")
+            for i in range(len(edge_ids)):
+                print(f"{'ε'+str(i):<10} ", end="")
+            print(f"{'Sparsité':<12} {'J':<12}")
+            print("-" * (20 + 10*len(edge_ids) + 24))
+
+            # CG
+            sparsity_cg = sum(eps_cg / L_vec)
+            print(f"{'CG':<20} ", end="")
+            for eps in eps_cg:
+                print(f"{eps:<10.4f} ", end="")
+            print(f"{sparsity_cg:<12.4f} {J_cg:<12.3e}")
+
+            # PG
+            sparsity_pg = sum(eps_pg / L_vec)
+            print(f"{'PG':<20} ", end="")
+            for eps in eps_pg:
+                print(f"{eps:<10.4f} ", end="")
+            print(f"{sparsity_pg:<12.4f} {J_pg:<12.3e}")
+
+            # Uzawa K=6.0
+            sparsity_u6 = sum(eps_uzawa_6 / L_vec)
+            print(f"{'Uzawa (K=6.0)':<20} ", end="")
+            for eps in eps_uzawa_6:
+                print(f"{eps:<10.4f} ", end="")
+            print(f"{sparsity_u6:<12.4f} {J_uzawa_6:<12.3e}")
+
+            # Uzawa K=4.0
+            sparsity_u4 = sum(eps_uzawa_4 / L_vec)
+            print(f"{'Uzawa (K=4.0)':<20} ", end="")
+            for eps in eps_uzawa_4:
+                print(f"{eps:<10.4f} ", end="")
+            print(f"{sparsity_u4:<12.4f} {J_uzawa_4:<12.3e}")
+
+            # Uzawa K=2.5
+            sparsity_u25 = sum(eps_uzawa_25 / L_vec)
+            print(f"{'Uzawa (K=2.5)':<20} ", end="")
+            for eps in eps_uzawa_25:
+                print(f"{eps:<10.4f} ", end="")
+            print(f"{sparsity_u25:<12.4f} {J_uzawa_25:<12.3e}")
+
+            print("\nERREURS PAR RAPPORT À LA SOLUTION EXACTE :")
+            print(f"{'Méthode':<20} ", end="")
+            for i in range(len(edge_ids)):
+                print(f"{'Err ε'+str(i):<12} ", end="")
+            print(f"{'Err moy':<12} {'Err max':<12}")
+            print("-" * (20 + 12*len(edge_ids) + 24))
+
+            def print_errors(name, eps):
+                errs = np.abs(eps - epsilon_true_vec)
+                print(f"{name:<20} ", end="")
+                for err in errs:
+                    print(f"{err:<12.4f} ", end="")
+                print(f"{np.mean(errs):<12.4f} {np.max(errs):<12.4f}")
+
+            print_errors("CG", eps_cg)
+            print_errors("PG", eps_pg)
+            print_errors("Uzawa (K=6.0)", eps_uzawa_6)
+            print_errors("Uzawa (K=4.0)", eps_uzawa_4)
+            print_errors("Uzawa (K=2.5)", eps_uzawa_25)
+
+            # ============================================================
+            # 7. VISUALISATIONS FINALES (CG)
+            # ============================================================
+            print("\n>>> Visualisations finales (solution CG)")
+
+            eps_dict_cg = {edge_ids[i]: eps_cg[i] for i in range(n_src)}
+
+            solver.solve_direct(eps_dict_cg, source_intensity)
+            solver.solve_adjoint(eps_dict_cg, u_data, source_intensity)
+            solver.solve_sensitivity_epsilon(eps_dict_cg, source_intensity)
+
+            solver.plot_all_results(eps_dict_cg, u_data)
+
+            return {
+                "edge_ids": edge_ids,
+                "epsilon_true": epsilon_true_dict,
+                "epsilon_init": epsilon_init,
+                "epsilon_pg": eps_pg,
+                "epsilon_cg": eps_cg,
+                "epsilon_uzawa_6": eps_uzawa_6,
+                "epsilon_uzawa_4": eps_uzawa_4,
+                "epsilon_uzawa_25": eps_uzawa_25,
+                "J_ref": J_ref,
+                "J_pg": J_pg,
+                "J_cg": J_cg,
+                "J_uzawa_6": J_uzawa_6,
+                "J_uzawa_4": J_uzawa_4,
+                "J_uzawa_25": J_uzawa_25,
+            }
+
+
+def test_inverse_complex_pipeline_vectorial():
+        """
+        CAS TEST – RÉSEAU PIPELINE INTERMÉDIAIRE
+        ✔ graphe pipeline réaliste
+        ✔ 4-5 sources
+        ✔ PG vs CG vs UZAWA
+        """
+        
+        print("\n" + "=" * 90)
+        print("CAS TEST – RÉSEAU PIPELINE INTERMÉDIAIRE (4 sources)")
+        print("=" * 90)
+
+        # Graphe
+        graph = create_realistic_pipeline_network()
+        graph.plot_graph(title="Réseau pipeline – problème inverse (4 sources)")
+
+        solver = SourceLocalization(graph)
+        print(f"\nNombre total de DDL: {graph.n_dof}")
+
+        # Sources exactes
+        edge_ids = [2, 7, 10, 14]  # 4 arêtes stratégiques
+        source_intensity = 1.0
+
+        epsilon_hat = np.array([0.4, 0.6, 0.5, 0.7])
+
+        epsilon_true_dict = {
+            eid: epsilon_hat[i] * graph.edges[eid]["length"]
+            for i, eid in enumerate(edge_ids)
+        }
+
+        print("\n>>> Sources exactes")
+        for i, eid in enumerate(edge_ids):
+            L = graph.edges[eid]["length"]
+            print(f"  Arête {eid} : ε̂ = {epsilon_hat[i]:.3f}, ε = {epsilon_true_dict[eid]:.5f}")
+
+        # Données observées
+        u_exact = solver.solve_direct(epsilon_true_dict, source_intensity)
+        u_data = u_exact.copy()
+
+        solver.solve_direct(epsilon_true_dict, source_intensity)
+        J_ref = solver.compute_cost_functional(u_data)
+        print(f"\nJ référence = {J_ref:.3e}")
+
+        # Point initial
+        epsilon_init = np.array([
+            0.5 * graph.edges[eid]["length"] for eid in edge_ids
+        ])
+
+        # PG
+        print("\n" + "=" * 90)
+        print("OPTIMISATION – GRADIENT PROJETÉ")
+        print("=" * 90)
+        
+        eps_pg = solver.projected_gradient_epsilon_vector(
+            epsilon_init=epsilon_init,
+            edge_ids=edge_ids,
+            u_data=u_data,
+            source_intensity=source_intensity,
+            step=0.15,
+            max_iter=300,
+            tol=1e-9,
+        )
+
+        solver.solve_direct({edge_ids[i]: eps_pg[i] for i in range(len(edge_ids))}, source_intensity)
+        J_pg = solver.compute_cost_functional(u_data)
+
+        # CG
+        print("\n" + "=" * 90)
+        print("OPTIMISATION – GRADIENT CONJUGUÉ")
+        print("=" * 90)
+        
+        eps_cg = solver.conjugate_gradient_epsilon_vector(
+            epsilon_init=epsilon_init,
+            edge_ids=edge_ids,
+            u_data=u_data,
+            source_intensity=source_intensity,
+            max_iter=150,
+            tol=1e-9,
+        )
+
+        solver.solve_direct({edge_ids[i]: eps_cg[i] for i in range(len(edge_ids))}, source_intensity)
+        J_cg = solver.compute_cost_functional(u_data)
+
+        # UZAWA
+        print("\n" + "=" * 90)
+        print("OPTIMISATION – UZAWA")
+        print("=" * 90)
+        
+        eps_uzawa_4, lam_4 = solver.uzawa_epsilon_vector(
+            epsilon_init=epsilon_init,
+            edge_ids=edge_ids,
+            u_data=u_data,
+            source_intensity=source_intensity,
+            K_max=4.0,
+            step_init=0.35,
+            rho=1.5,
+            max_iter=500,
+            tol=1e-10,
+            verbose=True,
+        )
+
+        solver.solve_direct({edge_ids[i]: eps_uzawa_4[i] for i in range(len(edge_ids))}, source_intensity)
+        J_uzawa_4 = solver.compute_cost_functional(u_data)
+
+        eps_uzawa_25, lam_25 = solver.uzawa_epsilon_vector(
+            epsilon_init=epsilon_init,
+            edge_ids=edge_ids,
+            u_data=u_data,
+            source_intensity=source_intensity,
+            K_max=2.5,
+            step_init=0.3,
+            rho=2.0,
+            max_iter=500,
+            tol=1e-10,
+            verbose=False,
+        )
+
+        solver.solve_direct({edge_ids[i]: eps_uzawa_25[i] for i in range(len(edge_ids))}, source_intensity)
+        J_uzawa_25 = solver.compute_cost_functional(u_data)
+
+        # Comparaison
+        print("\n" + "=" * 90)
+        print("COMPARAISON FINALE")
+        print("=" * 90)
+
+        epsilon_true_vec = np.array([epsilon_true_dict[eid] for eid in edge_ids])
+        
+        methods = [
+            ("CG", eps_cg, J_cg),
+            ("PG", eps_pg, J_pg),
+            ("Uzawa K=4.0", eps_uzawa_4, J_uzawa_4),
+            ("Uzawa K=2.5", eps_uzawa_25, J_uzawa_25),
+        ]
+
+        print(f"{'Méthode':<20} {'J':<15} {'Err moy':<12} {'Err max':<12}")
+        print("-" * 60)
+        
+        for name, eps, J in methods:
+            errs = np.abs(eps - epsilon_true_vec)
+            print(f"{name:<20} {J:<15.6e} {np.mean(errs):<12.4f} {np.max(errs):<12.4f}")
+
+        # Visualisations
+        eps_dict_cg = {edge_ids[i]: eps_cg[i] for i in range(len(edge_ids))}
+        solver.solve_direct(eps_dict_cg, source_intensity)
+        solver.solve_adjoint(eps_dict_cg, u_data, source_intensity)
+        solver.solve_sensitivity_epsilon(eps_dict_cg, source_intensity)
+        solver.plot_all_results(eps_dict_cg, u_data)
+
+        return {
+            "epsilon_true": epsilon_true_dict,
+            "epsilon_cg": eps_cg,
+            "epsilon_pg": eps_pg,
+            "epsilon_uzawa_4": eps_uzawa_4,
+            "epsilon_uzawa_25": eps_uzawa_25,
+            "J_ref": J_ref,
+            "J_cg": J_cg,
+            "J_pg": J_pg,
+            "J_uzawa_4": J_uzawa_4,
+            "J_uzawa_25": J_uzawa_25,
+  }
+
+def create_very_complex_pipeline_network():
+    """
+    Graphe pipeline très complexe et enchevêtré
+    - cycles imbriqués
+    - bifurcations multiples
+    - by-pass transverses
+    - pipelines longs
+    - sorties multiples
+    """
+
+    graph = MetricGraph()
+
+    # ============================================================
+    # Sommets (géométrie étendue)
+    # ============================================================
+    positions = {
+        # noyau central
+        "v0": (0.0, 0.0),
+
+        # anneau interne
+        "v1": (1.0, 0.4),
+        "v2": (0.6, 1.2),
+        "v3": (-0.6, 1.2),
+        "v4": (-1.0, 0.4),
+        "v5": (-1.0, -0.6),
+        "v6": (-0.6, -1.2),
+        "v7": (0.6, -1.2),
+        "v8": (1.0, -0.6),
+
+        # anneau externe
+        "v9": (2.2, 0.8),
+        "v10": (2.5, -0.3),
+        "v11": (2.0, -1.4),
+        "v12": (-2.0, -1.4),
+        "v13": (-2.5, -0.3),
+        "v14": (-2.2, 0.8),
+
+        # pipelines longs
+        "p1": (3.8, -0.3),
+        "p2": (5.4, -0.3),
+        "p3": (7.0, -0.3),
+        "p4": (-3.8, -0.3),
+        "p5": (-5.4, -0.3),
+
+        # sorties
+        "b1": (0.6, 2.4),
+        "b2": (-0.6, 2.4),
+        "b3": (3.2, 1.6),
+        "b4": (3.2, -1.6),
+        "b5": (-3.2, -1.6),
+        "b6": (-3.2, 1.6),
+        "b7": (7.8, -0.3),
+        "b8": (-6.2, -0.3),
+    }
+
+    for v, (x, y) in positions.items():
+        graph.set_vertex_position(v, x, y)
+
+    eid = 0
+
+    # ============================================================
+    # Anneau interne
+    # ============================================================
+    inner_ring = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v1"]
+    for i in range(len(inner_ring) - 1):
+        graph.add_edge(eid, inner_ring[i], inner_ring[i + 1], 1.1, 1.0, 40)
+        eid += 1
+
+    # ============================================================
+    # Connexions centre
+    # ============================================================
+    for v in ["v1", "v3", "v5", "v7"]:
+        graph.add_edge(eid, "v0", v, 0.9, 1.0, 40)
+        eid += 1
+
+    # ============================================================
+    # Anneau externe
+    # ============================================================
+    outer_ring = ["v9", "v10", "v11", "v12", "v13", "v14", "v9"]
+    for i in range(len(outer_ring) - 1):
+        graph.add_edge(eid, outer_ring[i], outer_ring[i + 1], 1.4, 0.9, 40)
+        eid += 1
+
+    # ============================================================
+    # Connexions interne → externe (enchevêtrement)
+    # ============================================================
+    links = [
+        ("v1", "v9"), ("v2", "v9"),
+        ("v8", "v10"), ("v7", "v11"),
+        ("v6", "v12"), ("v5", "v12"),
+        ("v4", "v13"), ("v3", "v14"),
+    ]
+
+    for v_int, v_ext in links:
+        graph.add_edge(eid, v_int, v_ext, 1.0, 0.8, 40)
+        eid += 1
+
+    # ============================================================
+    # Pipelines longs
+    # ============================================================
+    pipeline_right = ["v10", "p1", "p2", "p3"]
+    pipeline_left = ["v13", "p4", "p5"]
+
+    for chain in [pipeline_right, pipeline_left]:
+        for i in range(len(chain) - 1):
+            graph.add_edge(eid, chain[i], chain[i + 1], 1.6, 0.6, 40)
+            eid += 1
+
+    # ============================================================
+    # Branches vers sorties (Dirichlet)
+    # ============================================================
+    exits = [
+        ("v2", "b1"), ("v3", "b2"),
+        ("v9", "b3"), ("v11", "b4"),
+        ("v12", "b5"), ("v14", "b6"),
+        ("p3", "b7"), ("p5", "b8"),
+    ]
+
+    for v_int, v_bord in exits:
+        graph.add_edge(eid, v_int, v_bord, 1.0, 1.0, 40)
+        eid += 1
+
+    # ============================================================
+    # Sommets de bord
+    # ============================================================
+    graph.set_boundary_vertices(
+        ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8"]
+    )
+
+    # ============================================================
+    # Construction des DDL
+    # ============================================================
+    graph.build_dof_map()
+
+    return graph
+
+
+
+
+
+
+    
